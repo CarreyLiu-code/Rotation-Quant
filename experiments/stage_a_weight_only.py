@@ -3,11 +3,13 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import time
 from pathlib import Path
 
 from tqdm import tqdm
 
 from rotationquant.modeling import TINYLLAMA_BASE_DIR, iter_llama_target_linears, load_causal_lm
+from rotationquant.run_metadata import build_run_metadata, create_run_output_dir, write_run_metadata
 from rotationquant.stage_a import STAGE_A_METHODS, stage_a_tensor_record
 
 
@@ -44,11 +46,13 @@ def write_outputs(records: list[dict[str, object]], output_dir: Path) -> None:
 
 
 def main() -> None:
+    start_time = time.perf_counter()
     args = parse_args()
     unknown_methods = sorted(set(args.methods) - set(STAGE_A_METHODS))
     if unknown_methods:
         raise ValueError(f"Unknown methods: {unknown_methods}")
 
+    output_dir, run_id, timestamp = create_run_output_dir(args.output_dir, "stage_a_tensor_sweep")
     model, _ = load_causal_lm(args.model_dir, dtype=args.dtype, device_map=args.device_map)
     layers = list(iter_llama_target_linears(model))
     if args.layer_limit is not None:
@@ -75,7 +79,24 @@ def main() -> None:
                 progress.update(1)
     progress.close()
 
-    write_outputs(records, Path(args.output_dir))
+    write_outputs(records, output_dir)
+    write_run_metadata(
+        build_run_metadata(
+            experiment="stage_a_tensor_sweep",
+            args=args,
+            output_dir=output_dir,
+            run_id=run_id,
+            timestamp=timestamp,
+            extra={
+                "record_count": len(records),
+                "target_layer_count": len(layers),
+                "duration_seconds": round(time.perf_counter() - start_time, 3),
+                "output_files": ["tensor_metrics.jsonl", "tensor_metrics.csv"],
+            },
+        ),
+        output_dir,
+        filename="run_metadata.json",
+    )
 
 
 if __name__ == "__main__":

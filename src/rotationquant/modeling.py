@@ -40,12 +40,16 @@ def load_causal_lm(model_dir: str, dtype: str = "float16", device_map: str | Non
         "float32": torch.float32,
     }[dtype]
     tokenizer = AutoTokenizer.from_pretrained(model_dir, use_fast=True)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_dir,
-        torch_dtype=torch_dtype,
-        device_map=device_map,
+    load_kwargs = {
+        "device_map": device_map,
         # Keep experiments reproducible/offline once the snapshot is downloaded.
-        local_files_only=True,
-    )
+        "local_files_only": True,
+    }
+    try:
+        model = AutoModelForCausalLM.from_pretrained(model_dir, dtype=torch_dtype, **load_kwargs)
+    except TypeError:
+        # Older Transformers releases used torch_dtype. Keeping the fallback
+        # makes the scripts portable across lab machines.
+        model = AutoModelForCausalLM.from_pretrained(model_dir, torch_dtype=torch_dtype, **load_kwargs)
     model.eval()
     return model, tokenizer

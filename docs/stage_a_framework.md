@@ -27,6 +27,7 @@
 | `src/rotationquant/stage_a.py` | A 线方法定义与单层权重量化记录生成 |
 | `src/rotationquant/stage_a_model.py` | A16Wb model-level 原地权重替换工具 |
 | `src/rotationquant/ppl.py` | causal LM sliding-window PPL 评估工具 |
+| `src/rotationquant/run_metadata.py` | 写入实验时间、Git commit、包版本、运行参数等 metadata |
 | `experiments/stage_a_weight_only.py` | A 线 tensor-level sweep 脚本，输出 JSONL/CSV |
 | `experiments/stage_a_ppl.py` | A 线 model-level PPL 脚本，逐方法重载 FP checkpoint 后量化 |
 | `experiments/inspect_tinyllama_arch.py` | 从 TinyLlama config 生成 A 线目标层 shape 和 block alignment 报告 |
@@ -44,6 +45,7 @@
 5. 每个记录包含 `quantizer_type` 和 `int_gemm_friendly`，避免把 Lloyd-Max fake quant 误解释为硬件加速。
 6. A16Wb PPL 入口：每个 method/bits 组合重新加载 FP 模型，再只替换目标 Linear 权重。
 7. TinyLlama 架构预检查：确认 GQA 下 `k_proj/v_proj` 的 shape 和 128-block 对齐。
+8. 实验产物记录：A 线脚本会在 `outputs/stage_a/<run_id>/` 下写 `run_metadata.json`，目录名和 metadata 里的 `run_id` 对齐。
 
 ## 后续补齐层级
 
@@ -67,11 +69,26 @@ scripts/run_stage_a_tensor_sweep.sh
 scripts/run_stage_a_ppl.sh
 ```
 
+在当前 Codex 环境中，MPS/Metal GPU 只有在授权外部命令中可见。已验证：
+
+```text
+inside sandbox: torch.backends.mps.is_available() == False
+outside sandbox: torch.backends.mps.is_available() == True, device_count == 1
+```
+
+因此需要用 GPU 跑 model-level PPL 时，应以授权方式执行，并传入：
+
+```bash
+--device mps
+```
+
 输出位置：
 
 ```text
-outputs/stage_a/tensor_metrics.jsonl
-outputs/stage_a/tensor_metrics.csv
-outputs/stage_a/ppl_runs.jsonl
-outputs/stage_a/ppl.csv
+outputs/stage_a/<YYYYMMDD_HHMMSS_stage_a_tensor_sweep>/tensor_metrics.jsonl
+outputs/stage_a/<YYYYMMDD_HHMMSS_stage_a_tensor_sweep>/tensor_metrics.csv
+outputs/stage_a/<YYYYMMDD_HHMMSS_stage_a_tensor_sweep>/run_metadata.json
+outputs/stage_a/<YYYYMMDD_HHMMSS_stage_a_ppl>/ppl_runs.jsonl
+outputs/stage_a/<YYYYMMDD_HHMMSS_stage_a_ppl>/ppl.csv
+outputs/stage_a/<YYYYMMDD_HHMMSS_stage_a_ppl>/run_metadata.json
 ```

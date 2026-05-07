@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import asdict
-
 import torch
 
 from rotationquant.modeling import iter_llama_target_linears
@@ -22,8 +20,11 @@ def apply_stage_a_weight_quant_(
     records: list[dict[str, object]] = []
     with torch.no_grad():
         for layer_name, layer in iter_llama_target_linears(model):
+            # Quantize on CPU for broad operator coverage, then copy the
+            # dequantized fake-quant weight back to the model device.
+            weight_cpu = layer.weight.detach().cpu()
             quantized_weight, metadata = quantize_weight_for_stage_a(
-                layer.weight.detach(),
+                weight_cpu,
                 bits=bits,
                 method_name=method_name,
                 block_size=block_size,

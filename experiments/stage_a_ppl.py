@@ -3,12 +3,14 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import time
 from pathlib import Path
 
 import torch
 
 from rotationquant.modeling import TINYLLAMA_BASE_DIR, load_causal_lm
 from rotationquant.ppl import evaluate_causal_lm_ppl, load_text_dataset, tokenize_texts
+from rotationquant.run_metadata import build_run_metadata, create_run_output_dir, write_run_metadata
 from rotationquant.stage_a import STAGE_A_METHODS
 from rotationquant.stage_a_model import apply_stage_a_weight_quant_
 
@@ -34,9 +36,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    start_time = time.perf_counter()
     args = parse_args()
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir, run_id, timestamp = create_run_output_dir(args.output_dir, "stage_a_ppl")
 
     texts = load_text_dataset(args.dataset, args.dataset_config, args.split, text_column=args.text_column)
     records: list[dict[str, object]] = []
@@ -90,6 +92,22 @@ def main() -> None:
         writer = csv.DictWriter(f, fieldnames=records[0].keys())
         writer.writeheader()
         writer.writerows(records)
+    write_run_metadata(
+        build_run_metadata(
+            experiment="stage_a_ppl",
+            args=args,
+            output_dir=output_dir,
+            run_id=run_id,
+            timestamp=timestamp,
+            extra={
+                "record_count": len(records),
+                "duration_seconds": round(time.perf_counter() - start_time, 3),
+                "output_files": ["ppl_runs.jsonl", "ppl.csv"],
+            },
+        ),
+        output_dir,
+        filename="run_metadata.json",
+    )
 
 
 if __name__ == "__main__":
