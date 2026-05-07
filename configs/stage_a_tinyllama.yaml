@@ -1,0 +1,36 @@
+model:
+  name: TinyLlama-1.1B-base
+  repo_id: TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T
+  local_dir: models/TinyLlama-1.1B-intermediate-step-1431k-3T
+  dtype: float16
+
+stage_a:
+  block_size: 128
+  bits: [4, 3, 2]
+  methods:
+    - direct_absmax
+    - hadamard_absmax
+    - hadamard_lm
+  target_linears:
+    - self_attn.q_proj
+    - self_attn.k_proj
+    - self_attn.v_proj
+    - self_attn.o_proj
+    - mlp.gate_proj
+    - mlp.up_proj
+    - mlp.down_proj
+  outputs:
+    tensor_metrics: outputs/stage_a/tensor_metrics.csv
+    layer_metrics: outputs/stage_a/layer_metrics.csv
+    model_ppl: outputs/stage_a/ppl.csv
+
+interpretation:
+  direct_absmax:
+    quantizer_type: uniform integer-like
+    int_gemm_friendly: "Yes"
+  hadamard_absmax:
+    quantizer_type: uniform integer-like
+    int_gemm_friendly: "Yes-ish; needs rotation handling"
+  hadamard_lm:
+    quantizer_type: non-uniform codebook
+    int_gemm_friendly: "No; needs LUT/dequant or codebook-aware MAC"

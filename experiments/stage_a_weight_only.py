@@ -1,0 +1,82 @@
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+from pathlib import Path
+
+from tqdm import tqdm
+
+from rotationquant.modeling import TINYLLAMA_BASE_DIR, iter_llama_target_linears, load_causal_lm
+from rotationquant.stage_a import STAGE_A_METHODS, stage_a_tensor_record
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Stage A weight-only tensor-level quantization sweep.")
+    parser.add_argument("--model-dir", default=TINYLLAMA_BASE_DIR)
+    parser.add_argument("--output-dir", default="outputs/stage_a")
+    parser.add_argument("--bits", nargs="+", type=int, default=[4, 3, 2])
+    parser.add_argument("--methods", nargs="+", default=["direct_absmax", "hadamard_absmax", "hadamard_lm"])
+    parser.add_argument("--block-size", type=int, default=128)
+    parser.add_argument("--dtype", choices=["float16", "bfloat16", "float32"], default="float16")
+    parser.add_argument("--device-map", default=None)
+    parser.add_argument("--layer-limit", type=int, default=None)
+    return parser.parse_args()
+
+
+def write_outputs(records: list[dict[str, object]], output_dir: Path) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    jsonl_path = output_dir / "tensor_metrics.jsonl"
+    csv_path = output_dir / "tensor_metrics.csv"
+
+    # JSONL preserves all metadata for later scripted analysis; CSV is the
+    # convenient first-pass table for comparing A1/A2/A3 across layers.
+    with jsonl_path.open("w", encoding="utf-8") as f:
+        for record in records:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    if records:
+        fieldnames = sorted({key for record in records for key in record.keys()})
+        with csv_path.open("w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(records)
+
+
+def main() -> None:
+    args = parse_args()
+    unknown_methods = sorted(set(args.methods) - set(STAGE_A_METHODS))
+    if unknown_methods:
+        raise ValueError(f"Unknown methods: {unknown_methods}")
+
+    model, _ = load_causal_lm(args.model_dir, dtype=args.dtype, device_map=args.device_map)
+    layers = list(iter_llama_target_linears(model))
+    if args.layer_limit is not None:
+        layers = layers[: args.layer_limit]
+
+    records: list[dict[str, object]] = []
+    total = len(layers) * len(args.bits) * len(args.methods)
+    progress = tqdm(total=total, desc="Stage A tensor sweep")
+    for layer_name, layer in layers:
+        # Move one layer at a time to CPU so this tensor-level sweep works on
+        # machines without enough unified memory for many extra model copies.
+        weight = layer.weight.detach().cpu()
+        for method in args.methods:
+            for bits in args.bits:
+                records.append(
+                    stage_a_tensor_record(
+                        layer_name=layer_name,
+                        weight=weight,
+                        bits=bits,
+                        method_name=method,
+                        block_size=args.block_size,
+                    )
+                )
+                progress.update(1)
+    progress.close()
+
+    write_outputs(records, Path(args.output_dir))
+
+
+if __name__ == "__main__":
+    main()
