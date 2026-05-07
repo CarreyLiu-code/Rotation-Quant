@@ -25,7 +25,11 @@
 | `src/rotationquant/metrics.py` | relative MSE、cosine、SQNR、kurtosis 等 tensor-level 指标 |
 | `src/rotationquant/modeling.py` | TinyLlama 本地路径、LLaMA q/k/v/o 与 FFN linear 层筛选、模型加载入口 |
 | `src/rotationquant/stage_a.py` | A 线方法定义与单层权重量化记录生成 |
+| `src/rotationquant/stage_a_model.py` | A16Wb model-level 原地权重替换工具 |
+| `src/rotationquant/ppl.py` | causal LM sliding-window PPL 评估工具 |
 | `experiments/stage_a_weight_only.py` | A 线 tensor-level sweep 脚本，输出 JSONL/CSV |
+| `experiments/stage_a_ppl.py` | A 线 model-level PPL 脚本，逐方法重载 FP checkpoint 后量化 |
+| `experiments/inspect_tinyllama_arch.py` | 从 TinyLlama config 生成 A 线目标层 shape 和 block alignment 报告 |
 | `configs/stage_a_tinyllama.yaml` | TinyLlama + A 线默认实验配置 |
 | `scripts/run_stage_a_tensor_sweep.sh` | 一键运行 tensor-level sweep 的 shell 入口 |
 
@@ -38,15 +42,16 @@
 3. W4 / W3 / W2 bit sweep；
 4. tensor-level 指标表输出；
 5. 每个记录包含 `quantizer_type` 和 `int_gemm_friendly`，避免把 Lloyd-Max fake quant 误解释为硬件加速。
+6. A16Wb PPL 入口：每个 method/bits 组合重新加载 FP 模型，再只替换目标 Linear 权重。
+7. TinyLlama 架构预检查：确认 GQA 下 `k_proj/v_proj` 的 shape 和 128-block 对齐。
 
 ## 后续补齐层级
 
 后续需要在同一框架上继续补：
 
 1. `layer_metrics.py`：固定 calibration activation，比较 `xW` 和 `xW_hat`；
-2. `apply_weight_patch.py`：把 `W_hat` 写回模型副本，支撑 A16Wb PPL；
-3. `ppl.py`：WikiText2 / C4 subset 困惑度评估；
-4. 汇总脚本：对比 `Hadamard-LM W3` 与 `Hadamard-Absmax W4`。
+2. C4 / WikiText2 数据下载缓存策略；
+3. 汇总脚本：对比 `Hadamard-LM W3` 与 `Hadamard-Absmax W4`。
 
 ## 运行入口
 
@@ -56,9 +61,17 @@
 scripts/run_stage_a_tensor_sweep.sh
 ```
 
+运行 model-level PPL：
+
+```bash
+scripts/run_stage_a_ppl.sh
+```
+
 输出位置：
 
 ```text
 outputs/stage_a/tensor_metrics.jsonl
 outputs/stage_a/tensor_metrics.csv
+outputs/stage_a/ppl_runs.jsonl
+outputs/stage_a/ppl.csv
 ```
