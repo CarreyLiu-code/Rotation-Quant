@@ -37,6 +37,16 @@ def kurtosis(x: torch.Tensor, eps: float = 1e-12) -> float:
     return float((centered.pow(4).mean() / var.square()).cpu())
 
 
+def outlier_ratio(x: torch.Tensor, threshold: float = 3.0, eps: float = 1e-12) -> float:
+    """Fraction of values farther than threshold standard deviations from mean."""
+    values = x.float().reshape(-1)
+    if values.numel() == 0:
+        return math.nan
+    centered = values - values.mean()
+    std = centered.square().mean().sqrt().clamp_min(eps)
+    return float((centered.abs() > threshold * std).float().mean().cpu())
+
+
 def tensor_metrics(reference: torch.Tensor, candidate: torch.Tensor) -> dict[str, float]:
     return {
         "relative_mse": relative_mse(reference, candidate),
@@ -52,6 +62,7 @@ def distribution_metrics(x: torch.Tensor) -> dict[str, float]:
         "std": float(values.std(unbiased=False).cpu()),
         "max_mean_ratio": max_mean_ratio(values),
         "kurtosis": kurtosis(values),
+        "outlier_ratio_3sigma": outlier_ratio(values, threshold=3.0),
         "numel": int(values.numel()),
         "nan_count": int(torch.isnan(values).sum().cpu()),
         "inf_count": int(torch.isinf(values).sum().cpu()),

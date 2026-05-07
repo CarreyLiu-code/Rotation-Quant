@@ -118,3 +118,77 @@ PPL results:
 | Hadamard LM | 2 | 19646.836571 |
 
 A 阶段核心判断：`Hadamard-LM W3` 的 PPL 明显优于 `Hadamard-Absmax W4`，说明 Lloyd-Max 在 Hadamard rotation 后确实能把 weight-only 的数值可用位宽从 W4 推向 W3。`Hadamard-LM W2` 在 tensor reconstruction 上仍可看，但 model-level PPL 已经崩溃，暂时应作为失败边界。
+
+## 2026-05-07：Stage B Implementation Smoke Tests
+
+| Item | Value |
+| --- | --- |
+| Git commit before implementation | `a7402f0c1f8270a84771bbc6270e479a133cdb30` |
+| Note | Smoke runs were executed before committing Stage B code, so `run_metadata.json` records a dirty worktree. |
+
+### B1 Activation Smoke
+
+| Item | Value |
+| --- | --- |
+| Run ID | `20260507_204757+0800_stage_b_activation` |
+| Output dir | `outputs/stage_b/20260507_204757+0800_stage_b_activation` |
+| Scope | layer 0 only, WikiText2 test, max samples 2, sequence length 64 |
+| Records | 54 |
+| Duration | 20.976 seconds |
+
+Selected B1 observations:
+
+| Site | Comparison | Relative MSE |
+| --- | --- | ---: |
+| `attn_input` | Rot-LM A3 vs Rot-Absmax A4 | 0.036233 vs 0.056836 |
+| `ffn_input` | Rot-LM A3 vs Rot-Absmax A4 | 0.031058 vs 0.063336 |
+| `ffn_intermediate` | Rot-LM A3 vs Rot-Absmax A4 | 0.033353 vs 0.151254 |
+| `k_proj_out` | Rot-LM A3 vs Rot-Absmax A4 | 0.029491 vs 0.033453 |
+| `q_proj_out` | Rot-LM A3 vs Rot-Absmax A4 | 0.034286 vs 0.102861 |
+| `v_proj_out` | Rot-LM A3 vs Rot-Absmax A4 | 0.032232 vs 0.027583 |
+
+Smoke conclusion: B1 pipeline works. On this tiny sample, Rot-LM A3 is usually better than Rot-Absmax A4, except `v_proj_out` where Rot-Absmax A4 is slightly better.
+
+### B2 Local Linear / FFN Smoke
+
+| Item | Value |
+| --- | --- |
+| Run ID | `20260507_205123+0800_stage_b_local` |
+| Output dir | `outputs/stage_b/20260507_205123+0800_stage_b_local` |
+| Scope | layer 0 only, WikiText2 test, max samples 2, sequence length 64 |
+| Linear records | 49 |
+| FFN records | 7 |
+| Duration | 23.239 seconds |
+
+Selected B2 mean relative MSE:
+
+| Group | Method | Relative MSE |
+| --- | --- | ---: |
+| Linear | Rot-Absmax W4A4 | 0.291163 |
+| Linear | Rot-LM W3A4 | 0.076058 |
+| Linear | Rot-LM W4A3 | 0.067143 |
+| FFN | FFN Rot-Absmax W4A4 | 0.387884 |
+| FFN | FFN Rot-LM W3A4 | 0.042874 |
+| FFN | FFN Rot-LM W4A3 | 0.040741 |
+
+Smoke conclusion: B2 pipeline works. On this tiny sample, Rot-LM W3A4 / W4A3 are both much better than Rot-Absmax W4A4 for local Linear and FFN output error.
+
+### B4 FFN-only PPL Smoke
+
+| Item | Value |
+| --- | --- |
+| Run ID | `20260507_211859+0800_stage_b_ppl` |
+| Output dir | `outputs/stage_b/20260507_211859+0800_stage_b_ppl` |
+| Device | `mps` |
+| Scope | WikiText2 test, max samples 2, sequence length 64 |
+| Records | 2 |
+| Duration | 332.475 seconds |
+
+PPL smoke results:
+
+| Method | PPL |
+| --- | ---: |
+| FP16 | 617.328152 |
+| FFN Rot-LM W4A4 | 579.691680 |
+
+Smoke conclusion: B4 model wrapper and PPL output path work on MPS. This short-context PPL is only a path check, not a formal quality conclusion.

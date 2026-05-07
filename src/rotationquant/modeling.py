@@ -25,6 +25,25 @@ def iter_llama_target_linears(model: torch.nn.Module) -> Iterator[tuple[str, tor
             yield name, module
 
 
+def iter_llama_decoder_layers(model: torch.nn.Module) -> Iterator[tuple[int, torch.nn.Module]]:
+    """Yield decoder layers from Hugging Face LLaMA-like causal LM models."""
+    inner = getattr(model, "model", None)
+    layers = getattr(inner, "layers", None)
+    if layers is None:
+        raise ValueError("Expected a Hugging Face LLaMA-like model with model.layers.")
+    for index, layer in enumerate(layers):
+        yield index, layer
+
+
+def iter_llama_ffn_modules(model: torch.nn.Module) -> Iterator[tuple[str, torch.nn.Module]]:
+    """Yield FFN modules; Hugging Face calls them `mlp`, but Stage B uses FFN."""
+    for index, layer in iter_llama_decoder_layers(model):
+        ffn = getattr(layer, "mlp", None)
+        if ffn is None:
+            raise ValueError(f"Decoder layer {index} has no mlp/FFN module.")
+        yield f"model.layers.{index}.mlp", ffn
+
+
 def load_causal_lm(model_dir: str, dtype: str = "float16", device_map: str | None = None):
     """Load a local Hugging Face causal LM without tying the code to one checkpoint."""
     try:
