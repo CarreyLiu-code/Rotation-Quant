@@ -1,0 +1,21 @@
+# Large downloaded model artifacts
+models/
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+
+# Experiment outputs and transient logs
+outputs/
+runs/
+wandb/
+*.log
+
+# OS/editor noise
+.DS_Store
+.vscode/
+.idea/
