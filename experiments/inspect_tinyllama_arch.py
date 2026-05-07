@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import struct
 from pathlib import Path
 
 TINYLLAMA_BASE_DIR = "models/TinyLlama-1.1B-intermediate-step-1431k-3T"
@@ -35,6 +36,37 @@ def expected_llama_linear_shapes(config: dict[str, object]) -> dict[str, list[in
     }
 
 
+def read_safetensors_header(path: Path) -> dict[str, object]:
+    """Read safetensors metadata without importing torch or safetensors."""
+    with path.open("rb") as f:
+        header_size = struct.unpack("<Q", f.read(8))[0]
+        header = f.read(header_size)
+    return json.loads(header)
+
+
+def actual_target_shapes_from_safetensors(model_dir: Path) -> dict[str, list[int]]:
+    weight_path = model_dir / "model.safetensors"
+    if not weight_path.exists():
+        return {}
+    header = read_safetensors_header(weight_path)
+    actual: dict[str, list[int]] = {}
+    suffixes = (
+        "self_attn.q_proj.weight",
+        "self_attn.k_proj.weight",
+        "self_attn.v_proj.weight",
+        "self_attn.o_proj.weight",
+        "mlp.gate_proj.weight",
+        "mlp.up_proj.weight",
+        "mlp.down_proj.weight",
+    )
+    for key, value in header.items():
+        if key == "__metadata__":
+            continue
+        if key.endswith(suffixes):
+            actual[key] = value["shape"]
+    return dict(sorted(actual.items()))
+
+
 def main() -> None:
     args = parse_args()
     model_dir = Path(args.model_dir)
@@ -42,6 +74,7 @@ def main() -> None:
         config = json.load(f)
 
     shapes = expected_llama_linear_shapes(config)
+    actual_target_shapes = actual_target_shapes_from_safetensors(model_dir)
     block_size = 128
     report = {
         "model_dir": str(model_dir),
@@ -54,6 +87,8 @@ def main() -> None:
         "num_key_value_heads": config.get("num_key_value_heads", config["num_attention_heads"]),
         "head_dim": int(config["hidden_size"]) // int(config["num_attention_heads"]),
         "target_weight_shapes": shapes,
+        "actual_target_weight_count": len(actual_target_shapes),
+        "actual_target_weight_shapes": actual_target_shapes,
         "stage_a_block_size": block_size,
         "block_alignment": {
             name: (shape[0] * shape[1]) % block_size == 0 for name, shape in shapes.items()

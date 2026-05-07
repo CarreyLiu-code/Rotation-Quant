@@ -79,4 +79,22 @@ A 阶段默认 `block_size = 128`。上述所有目标 weight 的元素总数都
 PYTHONPATH=src conda run -n rotationquant python experiments/inspect_tinyllama_arch.py
 ```
 
-该脚本会基于 `config.json` 输出目标 shape 和 block alignment；后续可以扩展为真实 `named_modules()` 复核。
+该脚本会基于 `config.json` 输出目标 shape 和 block alignment；如果 `model.safetensors` 已下载，还会直接解析 safetensors header，复核真实权重 key 和 shape。
+
+当前已复核结果：
+
+```text
+actual_target_weight_count = 154
+```
+
+真实 safetensors 权重命名与 A 阶段筛选规则一致，例如：
+
+```text
+model.layers.0.self_attn.q_proj.weight
+model.layers.0.self_attn.k_proj.weight
+model.layers.0.self_attn.v_proj.weight
+model.layers.0.self_attn.o_proj.weight
+model.layers.0.mlp.gate_proj.weight
+model.layers.0.mlp.up_proj.weight
+model.layers.0.mlp.down_proj.weight
+```
