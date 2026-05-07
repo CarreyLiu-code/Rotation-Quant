@@ -53,5 +53,12 @@ def evaluate_causal_lm_ppl(
         if end == input_ids.size(1):
             break
 
-    mean_nll = torch.stack(negative_log_likelihoods).mean()
-    return float(math.exp(float(mean_nll.cpu())))
+    mean_nll = torch.stack(negative_log_likelihoods).mean().cpu()
+    if not torch.isfinite(mean_nll):
+        return float("nan")
+    # Very broken quantization settings can produce a valid but enormous NLL.
+    # Record the failure as infinite PPL instead of aborting the whole sweep.
+    mean_nll_float = float(mean_nll)
+    if mean_nll_float > 700.0:
+        return float("inf")
+    return float(math.exp(mean_nll_float))
