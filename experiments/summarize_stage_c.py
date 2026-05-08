@@ -7,7 +7,7 @@ import pandas as pd
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Summarize Stage C run outputs.")
+    parser = argparse.ArgumentParser(description="Summarize Stage C output directories.")
     parser.add_argument("run_dir", help="Stage C output directory.")
     return parser.parse_args()
 
@@ -31,37 +31,18 @@ def main() -> None:
     run_dir = Path(args.run_dir)
     markdown = [f"# Stage C Summary: {run_dir.name}", ""]
 
-    if (run_dir / "invariance_metrics.csv").exists():
-        summary = summarize_metrics(
-            run_dir / "invariance_metrics.csv",
-            ["method"],
-            ["score_relative_mse", "max_score_abs_diff", "output_relative_mse", "output_cosine"],
-        )
-        markdown.extend(["## Invariance", "", to_markdown_table(summary.round(8)), ""])
-
-    if (run_dir / "kv_metrics.csv").exists():
-        summary = summarize_metrics(
-            run_dir / "kv_metrics.csv",
-            ["method_key", "method", "bits"],
-            ["score_relative_mse", "softmax_kl", "topk_overlap", "value_relative_mse", "output_cosine"],
-        )
-        summary.to_csv(run_dir / "summary_by_method.csv", index=False)
-        markdown.extend(["## KV Local", "", to_markdown_table(summary.round(6)), ""])
-
-    if (run_dir / "qjl_metrics.csv").exists():
-        summary = summarize_metrics(
-            run_dir / "qjl_metrics.csv",
-            ["method_key", "method", "bits"],
-            ["score_relative_mse", "softmax_kl", "topk_overlap", "output_cosine"],
-        )
-        summary.to_csv(run_dir / "summary_by_method.csv", index=False)
-        markdown.extend(["## QJL", "", to_markdown_table(summary.round(6)), ""])
-
     if (run_dir / "attention_layer_metrics.csv").exists():
         summary = summarize_metrics(
             run_dir / "attention_layer_metrics.csv",
-            ["method_key", "linear_bits", "kv_bits"],
-            ["projection_relative_mse", "score_relative_mse", "softmax_kl", "layer_output_relative_mse", "layer_output_cosine"],
+            ["method_key", "linear_bits", "kv_bits", "value_path"],
+            [
+                "projection_relative_mse",
+                "score_relative_mse",
+                "softmax_kl",
+                "pre_o_output_cosine",
+                "layer_output_relative_mse",
+                "layer_output_cosine",
+            ],
         )
         summary.to_csv(run_dir / "summary_by_method.csv", index=False)
         markdown.extend(["## Attention Layer", "", to_markdown_table(summary.round(6)), ""])

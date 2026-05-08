@@ -4,9 +4,8 @@ set -euo pipefail
 PYTHONPATH=src conda run -n rotationquant python experiments/stage_c_ppl.py \
   --model-dir models/TinyLlama-1.1B-intermediate-step-1431k-3T \
   --output-dir outputs/stage_c \
-  --methods fp16 attn_direct_absmax_w4a4_absmax_k4v4 attn_rot_absmax_w4a4_hlm_k4v4 attn_rot_lm_w4a4_hlm_k4v4 attn_rot_lm_w3a4_hlm_k3v4 attn_rot_lm_w4a3_hlm_k4v3 \
+  --methods fp16 attn_identity_fp16 attn_kv_hlm_k4v4 attn_kv_hlm_k3v4 attn_rot_lm_w4a4_hlm_k4v4 attn_rot_lm_w3a4_hlm_k3v4 attn_rot_lm_w4a3_hlm_k4v3 \
   --block-size 128 \
-  --qjl-seed 0 \
   --dtype float16 \
   --device mps \
   --dataset wikitext \

@@ -10,13 +10,14 @@ import torch
 from tqdm import tqdm
 
 from rotationquant.attention_capture import TinyLlamaAttentionCapture
+from rotationquant.metrics import cosine_similarity, relative_mse
 from rotationquant.modeling import TINYLLAMA_BASE_DIR, load_causal_lm
 from rotationquant.ppl import load_text_dataset, tokenize_texts
 from rotationquant.run_metadata import build_run_metadata, create_run_output_dir, write_run_metadata
 from rotationquant.stage_b import STAGE_B_METHODS
 from rotationquant.stage_c import (
-    STAGE_C_ATTENTION_SPECS,
     STAGE_C_KV_SPECS,
+    STAGE_C_STRUCTURED_ATTENTION_SPECS,
     AttentionComputation,
     attention_quality_metrics,
     reference_attention,
@@ -25,7 +26,7 @@ from rotationquant.stage_c_model import attention_layer_metrics_from_details, fa
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Stage C C4 structured attention layer fake quant.")
+    parser = argparse.ArgumentParser(description="Stage C C4 local attention-layer experiments.")
     parser.add_argument("--model-dir", default=TINYLLAMA_BASE_DIR)
     parser.add_argument("--output-dir", default="outputs/stage_c")
     parser.add_argument(
@@ -33,15 +34,17 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         default=[
             "fp16",
-            "attn_direct_absmax_w4a4_absmax_k4v4",
-            "attn_rot_absmax_w4a4_hlm_k4v4",
+            "attn_identity_fp16",
+            "attn_kv_hlm_k4v4_reconstruct",
+            "attn_kv_hlm_k4v4",
+            "attn_kv_hlm_k3v4",
+            "attn_kv_hlm_k4v3",
             "attn_rot_lm_w4a4_hlm_k4v4",
             "attn_rot_lm_w3a4_hlm_k3v4",
             "attn_rot_lm_w4a3_hlm_k4v3",
         ],
     )
     parser.add_argument("--block-size", type=int, default=128)
-    parser.add_argument("--qjl-seed", type=int, default=0)
     parser.add_argument("--dtype", choices=["float16", "bfloat16", "float32"], default="float16")
     parser.add_argument("--device-map", default=None)
     parser.add_argument("--device", default=None)
@@ -87,15 +90,17 @@ def summarize(records: list[dict[str, object]], output_dir: Path) -> None:
         "score_relative_mse",
         "softmax_kl",
         "topk_overlap",
+        "pre_o_output_relative_mse",
+        "pre_o_output_cosine",
         "layer_output_relative_mse",
         "layer_output_cosine",
     ]
-    by_method = df.groupby(["method_key", "linear_bits", "kv_bits"], dropna=False)[metric_columns].mean().reset_index()
+    by_method = df.groupby(["method_key", "linear_bits", "kv_bits", "value_path"], dropna=False)[metric_columns].mean().reset_index()
     by_layer = df.groupby(["layer_index", "method_key"], dropna=False)[metric_columns].mean().reset_index()
     by_method.to_csv(output_dir / "summary_by_method.csv", index=False)
     by_layer.to_csv(output_dir / "summary_by_layer.csv", index=False)
     markdown = [
-        "# Stage C C4 Attention Layer Summary",
+        "# Stage C C4 Attention-layer Summary",
         "",
         to_markdown_table(
             by_method.round(6).to_dict(orient="records"),
@@ -103,9 +108,10 @@ def summarize(records: list[dict[str, object]], output_dir: Path) -> None:
                 "method_key",
                 "linear_bits",
                 "kv_bits",
-                "projection_relative_mse",
+                "value_path",
                 "score_relative_mse",
                 "softmax_kl",
+                "pre_o_output_cosine",
                 "layer_output_relative_mse",
                 "layer_output_cosine",
             ],
@@ -115,7 +121,7 @@ def summarize(records: list[dict[str, object]], output_dir: Path) -> None:
     (output_dir / "summary.md").write_text("\n".join(markdown), encoding="utf-8")
 
 
-def fp16_record(item) -> dict[str, object]:
+def fp16_record() -> dict[str, object]:
     return {
         "method": "fp16",
         "linear_method": "fp16",
@@ -126,7 +132,7 @@ def fp16_record(item) -> dict[str, object]:
         "kv_bits": "K16V16",
         "k_bits": 16,
         "v_bits": 16,
-        "qjl_method": "",
+        "value_path": "reference",
         "compute_interpretation": "baseline",
         "projection_relative_mse": 0.0,
         "projection_cosine": 1.0,
@@ -144,36 +150,46 @@ def fp16_record(item) -> dict[str, object]:
         "output_cosine": 1.0,
         "key_relative_mse": 0.0,
         "value_relative_mse": 0.0,
+        "pre_o_output_relative_mse": 0.0,
+        "pre_o_output_cosine": 1.0,
         "layer_output_relative_mse": 0.0,
         "layer_output_cosine": 1.0,
     }
 
 
 def method_metadata(method_key: str) -> dict[str, object]:
-    spec = STAGE_C_ATTENTION_SPECS[method_key]
-    linear_method = STAGE_B_METHODS[spec.linear_spec.method]
+    spec = STAGE_C_STRUCTURED_ATTENTION_SPECS[method_key]
     kv_spec = STAGE_C_KV_SPECS[spec.kv_spec_key]
+    linear_method = STAGE_B_METHODS[spec.linear_spec.method].name if spec.linear_spec is not None else "fp16"
     return {
         "method": spec.name,
-        "linear_method": linear_method.name,
-        "linear_bits": spec.linear_spec.label,
-        "w_bits": spec.linear_spec.w_bits,
-        "a_bits": spec.linear_spec.a_bits,
+        "linear_method": linear_method,
+        "linear_bits": spec.linear_spec.label if spec.linear_spec is not None else "FP16",
+        "w_bits": spec.linear_spec.w_bits if spec.linear_spec is not None else 16,
+        "a_bits": spec.linear_spec.a_bits if spec.linear_spec is not None else 16,
         "kv_method": kv_spec.method,
         "kv_bits": kv_spec.label,
         "k_bits": kv_spec.k_bits,
         "v_bits": kv_spec.v_bits,
-        "qjl_method": spec.qjl_spec_key or "",
+        "value_path": spec.value_path,
         "compute_interpretation": spec.compute_interpretation,
+    }
+
+
+def pre_o_metrics(reference_heads: torch.Tensor, details: dict[str, torch.Tensor]) -> dict[str, float]:
+    candidate = details.get("attn_output_heads_reference_domain", details["attn_output_heads"]).float()
+    return {
+        "pre_o_output_relative_mse": relative_mse(reference_heads, candidate),
+        "pre_o_output_cosine": cosine_similarity(reference_heads, candidate),
     }
 
 
 def main() -> None:
     start_time = time.perf_counter()
     args = parse_args()
-    unknown = sorted(set(args.methods) - (set(STAGE_C_ATTENTION_SPECS) | {"fp16"}))
+    unknown = sorted(set(args.methods) - (set(STAGE_C_STRUCTURED_ATTENTION_SPECS) | {"fp16"}))
     if unknown:
-        raise ValueError(f"Unknown Stage C attention-layer methods: {unknown}")
+        raise ValueError(f"Unknown Stage C attention methods: {unknown}")
 
     output_dir, run_id, timestamp = create_run_output_dir(args.output_dir, "stage_c_attention_layer")
     texts = load_text_dataset(args.dataset, args.dataset_config, args.split, text_column=args.text_column)
@@ -190,51 +206,40 @@ def main() -> None:
     records: list[dict[str, object]] = []
     progress = tqdm(total=len(capture.records) * len(args.methods), desc="Stage C attention layer")
     for item in capture.records:
+        attention_mask = item.attention_mask.float() if item.attention_mask is not None else None
         reference = reference_attention(
             item.q_rope.float(),
             item.k_rope.float(),
             item.v_proj_out.float(),
-            item.attention_mask.float() if item.attention_mask is not None else None,
+            attention_mask,
             item.scaling,
             item.num_key_value_groups,
         )
         for method_key in args.methods:
             if method_key == "fp16":
-                metrics = fp16_record(item)
+                metrics = fp16_record()
             else:
                 output, details = fake_quant_attention_from_record(
                     item,
                     method_name=method_key,
                     block_size=args.block_size,
-                    qjl_seed=args.qjl_seed,
                 )
                 candidate = AttentionComputation(
                     raw_inner_product=details["raw_inner_product"].float(),
                     scores=details["scores"].float(),
                     probs=details["attn_probs"].float(),
-                    output_heads=details["attn_output_heads"].float(),
+                    output_heads=details.get("attn_output_heads_reference_domain", details["attn_output_heads"]).float(),
                     key_hat=details["key_hat"].float(),
                     value_hat=details["value_hat"].float(),
                     metadata={},
                 )
-                quality = attention_quality_metrics(
-                    reference,
-                    candidate,
-                    item.attention_mask.float() if item.attention_mask is not None else None,
-                )
                 metrics = {
                     **method_metadata(method_key),
-                    **quality,
+                    **attention_quality_metrics(reference, candidate, attention_mask),
+                    **pre_o_metrics(item.attn_output_heads.float(), details),
                     **attention_layer_metrics_from_details(item, output, details),
                 }
-            records.append(
-                {
-                    "layer_index": item.layer_index,
-                    "layer": item.layer,
-                    "method_key": method_key,
-                    **metrics,
-                }
-            )
+            records.append({"layer_index": item.layer_index, "layer": item.layer, "method_key": method_key, **metrics})
             progress.update(1)
     progress.close()
 

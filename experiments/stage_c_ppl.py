@@ -12,7 +12,7 @@ from rotationquant.modeling import TINYLLAMA_BASE_DIR, load_causal_lm
 from rotationquant.ppl import evaluate_causal_lm_ppl, load_text_dataset, tokenize_texts
 from rotationquant.run_metadata import build_run_metadata, create_run_output_dir, write_run_metadata
 from rotationquant.stage_b import STAGE_B_METHODS
-from rotationquant.stage_c import STAGE_C_ATTENTION_SPECS, STAGE_C_KV_SPECS
+from rotationquant.stage_c import STAGE_C_KV_SPECS, STAGE_C_STRUCTURED_ATTENTION_SPECS
 from rotationquant.stage_c_model import apply_stage_c_attention_fake_quant_
 
 
@@ -25,15 +25,15 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         default=[
             "fp16",
-            "attn_direct_absmax_w4a4_absmax_k4v4",
-            "attn_rot_absmax_w4a4_hlm_k4v4",
+            "attn_identity_fp16",
+            "attn_kv_hlm_k4v4",
+            "attn_kv_hlm_k3v4",
             "attn_rot_lm_w4a4_hlm_k4v4",
             "attn_rot_lm_w3a4_hlm_k3v4",
             "attn_rot_lm_w4a3_hlm_k4v3",
         ],
     )
     parser.add_argument("--block-size", type=int, default=128)
-    parser.add_argument("--qjl-seed", type=int, default=0)
     parser.add_argument("--dtype", choices=["float16", "bfloat16", "float32"], default="float16")
     parser.add_argument("--device-map", default=None)
     parser.add_argument("--device", default=None)
@@ -59,31 +59,31 @@ def method_metadata(method_name: str, quantized_layers: int) -> dict[str, object
             "kv_bits": "K16V16",
             "k_bits": 16,
             "v_bits": 16,
-            "qjl_method": "",
+            "value_path": "reference",
             "compute_interpretation": "baseline",
             "quantized_attention_modules": 0,
         }
-    spec = STAGE_C_ATTENTION_SPECS[method_name]
-    linear_method = STAGE_B_METHODS[spec.linear_spec.method]
+    spec = STAGE_C_STRUCTURED_ATTENTION_SPECS[method_name]
     kv_spec = STAGE_C_KV_SPECS[spec.kv_spec_key]
+    linear_method = STAGE_B_METHODS[spec.linear_spec.method].name if spec.linear_spec is not None else "fp16"
     return {
         "method": spec.name,
-        "linear_method": linear_method.name,
-        "linear_bits": spec.linear_spec.label,
-        "w_bits": spec.linear_spec.w_bits,
-        "a_bits": spec.linear_spec.a_bits,
+        "linear_method": linear_method,
+        "linear_bits": spec.linear_spec.label if spec.linear_spec is not None else "FP16",
+        "w_bits": spec.linear_spec.w_bits if spec.linear_spec is not None else 16,
+        "a_bits": spec.linear_spec.a_bits if spec.linear_spec is not None else 16,
         "kv_method": kv_spec.method,
         "kv_bits": kv_spec.label,
         "k_bits": kv_spec.k_bits,
         "v_bits": kv_spec.v_bits,
-        "qjl_method": spec.qjl_spec_key or "",
+        "value_path": spec.value_path,
         "compute_interpretation": spec.compute_interpretation,
         "quantized_attention_modules": quantized_layers,
     }
 
 
 def write_summary(records: list[dict[str, object]], output_dir: Path) -> None:
-    columns = ["method_key", "linear_bits", "kv_bits", "qjl_method", "ppl", "compute_interpretation"]
+    columns = ["method_key", "linear_bits", "kv_bits", "value_path", "ppl", "compute_interpretation"]
     lines = ["# Stage C C5 PPL Summary", "", "| " + " | ".join(columns) + " |", "| " + " | ".join("---" for _ in columns) + " |"]
     for record in records:
         lines.append("| " + " | ".join(str(record.get(column, "")) for column in columns) + " |")
@@ -94,7 +94,7 @@ def write_summary(records: list[dict[str, object]], output_dir: Path) -> None:
 def main() -> None:
     start_time = time.perf_counter()
     args = parse_args()
-    unknown = sorted(set(args.methods) - (set(STAGE_C_ATTENTION_SPECS) | {"fp16"}))
+    unknown = sorted(set(args.methods) - (set(STAGE_C_STRUCTURED_ATTENTION_SPECS) | {"fp16"}))
     if unknown:
         raise ValueError(f"Unknown Stage C PPL methods: {unknown}")
 
@@ -106,12 +106,10 @@ def main() -> None:
         model, tokenizer = load_causal_lm(args.model_dir, dtype=args.dtype, device_map=args.device_map)
         quant_metadata: list[dict[str, object]] = []
         if method_name != "fp16":
-            # Build wrappers on CPU first; model.to("mps") moves the prepared buffers.
             quant_metadata = apply_stage_c_attention_fake_quant_(
                 model,
                 method_name,
                 block_size=args.block_size,
-                qjl_seed=args.qjl_seed,
             )
         if args.device is not None and args.device_map is None:
             model.to(args.device)

@@ -43,16 +43,7 @@ class QJLSpec:
 
 
 @dataclass(frozen=True)
-class StageCAttentionSpec:
-    name: str
-    linear_spec: WABitSpec | None
-    kv_spec_key: str
-    qjl_spec_key: str | None
-    compute_interpretation: str
-
-
-@dataclass(frozen=True)
-class StageCRefineAttentionSpec:
+class StageCStructuredAttentionSpec:
     name: str
     linear_spec: WABitSpec | None
     kv_spec_key: str
@@ -194,54 +185,8 @@ STAGE_C_QJL_SPECS: dict[str, QJLSpec] = {
 }
 
 
-STAGE_C_ATTENTION_SPECS: dict[str, StageCAttentionSpec] = {
-    "attn_direct_absmax_w4a4_absmax_k4v4": StageCAttentionSpec(
-        name="attn_direct_absmax_w4a4_absmax_k4v4",
-        linear_spec=STAGE_B_LINEAR_SPECS["direct_absmax_w4a4"],
-        kv_spec_key="absmax_k4v4",
-        qjl_spec_key=None,
-        compute_interpretation="direct W/A fake quant plus uniform KV fake quant",
-    ),
-    "attn_rot_absmax_w4a4_hlm_k4v4": StageCAttentionSpec(
-        name="attn_rot_absmax_w4a4_hlm_k4v4",
-        linear_spec=STAGE_B_LINEAR_SPECS["rot_absmax_w4a4"],
-        kv_spec_key="hadamard_lm_k4v4",
-        qjl_spec_key=None,
-        compute_interpretation="rotated uniform W/A fake quant plus rotated KV fake quant",
-    ),
-    "attn_rot_lm_w4a4_hlm_k4v4": StageCAttentionSpec(
-        name="attn_rot_lm_w4a4_hlm_k4v4",
-        linear_spec=STAGE_B_LINEAR_SPECS["rot_lm_w4a4"],
-        kv_spec_key="hadamard_lm_k4v4",
-        qjl_spec_key=None,
-        compute_interpretation="rotated non-uniform W/A and KV fake quant",
-    ),
-    "attn_rot_lm_w3a4_hlm_k3v4": StageCAttentionSpec(
-        name="attn_rot_lm_w3a4_hlm_k3v4",
-        linear_spec=STAGE_B_LINEAR_SPECS["rot_lm_w3a4"],
-        kv_spec_key="hadamard_lm_k3v4",
-        qjl_spec_key=None,
-        compute_interpretation="weight and key bit reduction in fake quant",
-    ),
-    "attn_rot_lm_w4a3_hlm_k4v3": StageCAttentionSpec(
-        name="attn_rot_lm_w4a3_hlm_k4v3",
-        linear_spec=STAGE_B_LINEAR_SPECS["rot_lm_w4a3"],
-        kv_spec_key="hadamard_lm_k4v3",
-        qjl_spec_key=None,
-        compute_interpretation="activation and value bit reduction in fake quant",
-    ),
-    "attn_rot_lm_w3a4_hlm_k2qjl_v4": StageCAttentionSpec(
-        name="attn_rot_lm_w3a4_hlm_k2qjl_v4",
-        linear_spec=STAGE_B_LINEAR_SPECS["rot_lm_w3a4"],
-        kv_spec_key="hadamard_lm_k4v4",
-        qjl_spec_key="hadamard_lm_k2_qjl",
-        compute_interpretation="weight bit reduction plus QJL-corrected key fake quant",
-    ),
-}
-
-
-STAGE_C_REFINE_ATTENTION_SPECS: dict[str, StageCRefineAttentionSpec] = {
-    "attn_identity_fp16": StageCRefineAttentionSpec(
+STAGE_C_STRUCTURED_ATTENTION_SPECS: dict[str, StageCStructuredAttentionSpec] = {
+    "attn_identity_fp16": StageCStructuredAttentionSpec(
         name="attn_identity_fp16",
         linear_spec=None,
         kv_spec_key="fp16",
@@ -250,8 +195,8 @@ STAGE_C_REFINE_ATTENTION_SPECS: dict[str, StageCRefineAttentionSpec] = {
         quantize_o=False,
         compute_interpretation="identity attention wrapper; no quantization",
     ),
-    "attn_kv_only_hlm_k4v4_reconstruct": StageCRefineAttentionSpec(
-        name="attn_kv_only_hlm_k4v4_reconstruct",
+    "attn_kv_hlm_k4v4_reconstruct": StageCStructuredAttentionSpec(
+        name="attn_kv_hlm_k4v4_reconstruct",
         linear_spec=None,
         kv_spec_key="hadamard_lm_k4v4",
         value_path="reconstruct",
@@ -259,8 +204,8 @@ STAGE_C_REFINE_ATTENTION_SPECS: dict[str, StageCRefineAttentionSpec] = {
         quantize_o=False,
         compute_interpretation="KV-only HLM K4V4 with value reconstruction",
     ),
-    "attn_kv_only_hlm_k4v4_oabsorb": StageCRefineAttentionSpec(
-        name="attn_kv_only_hlm_k4v4_oabsorb",
+    "attn_kv_hlm_k4v4": StageCStructuredAttentionSpec(
+        name="attn_kv_hlm_k4v4",
         linear_spec=None,
         kv_spec_key="hadamard_lm_k4v4",
         value_path="o_proj_absorb",
@@ -268,8 +213,8 @@ STAGE_C_REFINE_ATTENTION_SPECS: dict[str, StageCRefineAttentionSpec] = {
         quantize_o=False,
         compute_interpretation="KV-only HLM K4V4 with value rotation absorbed into o_proj",
     ),
-    "attn_kv_only_hlm_k3v4_oabsorb": StageCRefineAttentionSpec(
-        name="attn_kv_only_hlm_k3v4_oabsorb",
+    "attn_kv_hlm_k3v4": StageCStructuredAttentionSpec(
+        name="attn_kv_hlm_k3v4",
         linear_spec=None,
         kv_spec_key="hadamard_lm_k3v4",
         value_path="o_proj_absorb",
@@ -277,8 +222,8 @@ STAGE_C_REFINE_ATTENTION_SPECS: dict[str, StageCRefineAttentionSpec] = {
         quantize_o=False,
         compute_interpretation="KV-only HLM K3V4 with value rotation absorbed into o_proj",
     ),
-    "attn_kv_only_hlm_k4v3_oabsorb": StageCRefineAttentionSpec(
-        name="attn_kv_only_hlm_k4v3_oabsorb",
+    "attn_kv_hlm_k4v3": StageCStructuredAttentionSpec(
+        name="attn_kv_hlm_k4v3",
         linear_spec=None,
         kv_spec_key="hadamard_lm_k4v3",
         value_path="o_proj_absorb",
@@ -286,8 +231,8 @@ STAGE_C_REFINE_ATTENTION_SPECS: dict[str, StageCRefineAttentionSpec] = {
         quantize_o=False,
         compute_interpretation="KV-only HLM K4V3 with value rotation absorbed into o_proj",
     ),
-    "attn_rot_lm_w4a4_hlm_k4v4_oabsorb": StageCRefineAttentionSpec(
-        name="attn_rot_lm_w4a4_hlm_k4v4_oabsorb",
+    "attn_rot_lm_w4a4_hlm_k4v4": StageCStructuredAttentionSpec(
+        name="attn_rot_lm_w4a4_hlm_k4v4",
         linear_spec=STAGE_B_LINEAR_SPECS["rot_lm_w4a4"],
         kv_spec_key="hadamard_lm_k4v4",
         value_path="o_proj_absorb",
@@ -295,8 +240,8 @@ STAGE_C_REFINE_ATTENTION_SPECS: dict[str, StageCRefineAttentionSpec] = {
         quantize_o=True,
         compute_interpretation="rotated LM W4A4 plus HLM K4V4 with value rotation absorbed into o_proj",
     ),
-    "attn_rot_lm_w3a4_hlm_k3v4_oabsorb": StageCRefineAttentionSpec(
-        name="attn_rot_lm_w3a4_hlm_k3v4_oabsorb",
+    "attn_rot_lm_w3a4_hlm_k3v4": StageCStructuredAttentionSpec(
+        name="attn_rot_lm_w3a4_hlm_k3v4",
         linear_spec=STAGE_B_LINEAR_SPECS["rot_lm_w3a4"],
         kv_spec_key="hadamard_lm_k3v4",
         value_path="o_proj_absorb",
@@ -304,8 +249,8 @@ STAGE_C_REFINE_ATTENTION_SPECS: dict[str, StageCRefineAttentionSpec] = {
         quantize_o=True,
         compute_interpretation="rotated LM W3A4 plus HLM K3V4 with value rotation absorbed into o_proj",
     ),
-    "attn_rot_lm_w4a3_hlm_k4v3_oabsorb": StageCRefineAttentionSpec(
-        name="attn_rot_lm_w4a3_hlm_k4v3_oabsorb",
+    "attn_rot_lm_w4a3_hlm_k4v3": StageCStructuredAttentionSpec(
+        name="attn_rot_lm_w4a3_hlm_k4v3",
         linear_spec=STAGE_B_LINEAR_SPECS["rot_lm_w4a3"],
         kv_spec_key="hadamard_lm_k4v3",
         value_path="o_proj_absorb",
@@ -314,7 +259,6 @@ STAGE_C_REFINE_ATTENTION_SPECS: dict[str, StageCRefineAttentionSpec] = {
         compute_interpretation="rotated LM W4A3 plus HLM K4V3 with value rotation absorbed into o_proj",
     ),
 }
-
 
 def make_head_signs(
     head_dim: int,

@@ -173,7 +173,7 @@ Selected B2 mean relative MSE:
 
 Smoke conclusion: B2 pipeline works. On this tiny sample, Rot-LM W3A4 / W4A3 are both much better than Rot-Absmax W4A4 for local Linear and FFN output error.
 
-### B4 FFN-only PPL Smoke
+### B3 FFN-only PPL Smoke
 
 | Item | Value |
 | --- | --- |
@@ -191,7 +191,7 @@ PPL smoke results:
 | FP16 | 617.328152 |
 | FFN Rot-LM W4A4 | 579.691680 |
 
-Smoke conclusion: B4 model wrapper and PPL output path work on MPS. This short-context PPL is only a path check, not a formal quality conclusion.
+Smoke conclusion: B3 model wrapper and PPL output path work on MPS. This short-context PPL is only a path check, not a formal quality conclusion.
 
 ## 2026-05-08：Stage B Full Runs
 
@@ -248,7 +248,7 @@ Selected mean relative MSE:
 
 Conclusion: local Linear and FFN results both strongly support `Rot-LM W3A4` / `Rot-LM W4A3` over `Rot-Absmax W4A4`.
 
-### B4 FFN-only PPL Full Run
+### B3 FFN-only PPL Full Run
 
 | Item | Value |
 | --- | --- |
@@ -564,22 +564,32 @@ PPL results:
 
 Stage C conclusion: KV-local and single-layer Attention results are encouraging, but the current Attention-only model-level wrapper does not preserve PPL. This suggests the first C5 implementation is not yet a usable full-model quantization path; likely next checks are residual stream / `o_proj` interaction, accumulation of attention-layer errors across depth, and whether value rotation should be structurally absorbed rather than reconstructed locally. The useful positive result remains C2: post-RoPE Hadamard-LM can make `K3V4` locally competitive with uniform `K4V4`; the negative result is that this does not yet survive full Attention-only replacement.
 
-## 2026-05-08：Stage C Refine Plan
+## 2026-05-08：Stage C Value-Absorb Integration Plan
 
-Detailed Stage C refine records live in `docs/stage_c_refine.md`.
+The value rotation + `o_proj` absorb path has been integrated into the main Stage C code and is now documented in `docs/stage_c.md`.
 
 | Item | Value |
 | --- | --- |
-| Refine doc | `docs/stage_c_refine.md` |
-| Output root | `outputs/stage_c_refine/` |
+| Stage C doc | `docs/stage_c.md` |
+| Output root for future runs | `outputs/stage_c/` |
 | Main change | Value rotation remains in attention output and is absorbed into `o_proj.weight` using independent H64 blocks |
 | Q/K rule | keep per-head H64 score rotation; no cross-head H128 mixing |
 
-## 2026-05-08：Stage C Refine Formal Runs
+## 2026-05-08：Stage C Value-Absorb Formal Runs
 
-Detailed tables and conclusions live in `docs/stage_c_refine.md`.
+The following runs were originally produced during the value-absorb development pass and are now treated as the reference results for integrated Stage C C4/C5. Their historical run IDs and output paths are kept unchanged for traceability.
 
 | Run | Run ID | Output dir | Summary |
 | --- | --- | --- | --- |
-| C4-refine Attention-layer local full | `20260508_182056+0800_stage_c_refine_attention_layer` | `outputs/stage_c_refine/20260508_182056+0800_stage_c_refine_attention_layer` | identity passes; best structured local method is `attn_rot_lm_w4a4_hlm_k4v4_oabsorb` |
-| C5-refine Attention-only PPL full | `20260508_182156+0800_stage_c_refine_ppl` | `outputs/stage_c_refine/20260508_182156+0800_stage_c_refine_ppl` | identity matches FP16; `KV-only K4V4` PPL 8.204482; best structured method `W4A4/K4V4` PPL 8.614497 |
+| C4 integrated Attention-layer local full | `20260508_182056+0800_stage_c_refine_attention_layer` | `outputs/stage_c_refine/20260508_182056+0800_stage_c_refine_attention_layer` | identity passes; best structured local method is `attn_rot_lm_w4a4_hlm_k4v4` |
+| C5 integrated Attention-only PPL full | `20260508_182156+0800_stage_c_refine_ppl` | `outputs/stage_c_refine/20260508_182156+0800_stage_c_refine_ppl` | identity matches FP16; `KV-only K4V4` PPL 8.204482; best structured method `W4A4/K4V4` PPL 8.614497 |
+
+## 2026-05-09：Stage C Main-Entry Integration Smoke
+
+After merging the value-absorb path back into the main Stage C code, the canonical C4/C5 entrypoints were smoke-tested under `outputs/stage_c/`.
+
+| Run | Run ID | Scope | Result |
+| --- | --- | --- | --- |
+| C4 main entry smoke | `20260509_002909+0800_stage_c_attention_layer` | layer 0, max samples 2, sequence length 64; `fp16`, `attn_identity_fp16`, `attn_kv_hlm_k4v4`, `attn_rot_lm_w4a4_hlm_k4v4` | identity relative MSE `7.03e-08`; KV-only K4V4 layer output cosine `0.998133`; Rot-LM W4A4 + HLM K4V4 cosine `0.982361` |
+| C5 main entry smoke | `20260509_002951+0800_stage_c_ppl` | WikiText2 path check, max samples 2, sequence length/stride 64/64; `fp16`, `attn_identity_fp16`, `attn_kv_hlm_k4v4` | FP16 and identity both `617.328152`; KV-only K4V4 `647.099665`; short-context PPL is only a path check |
+| C4 cleanup smoke | `20260509_003502+0800_stage_c_attention_layer` | layer 0, max samples 1, sequence length 64; after removing the old model-level wrapper | identity relative MSE `6.99e-08`; KV-only K4V4 layer output cosine `0.997237` |

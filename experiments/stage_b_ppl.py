@@ -15,7 +15,7 @@ from rotationquant.stage_b import STAGE_B_MODEL_METHODS, STAGE_B_METHODS, apply_
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Stage B B4 FFN-only model-level PPL evaluation.")
+    parser = argparse.ArgumentParser(description="Stage B B3 FFN-only model-level PPL evaluation.")
     parser.add_argument("--model-dir", default=TINYLLAMA_BASE_DIR)
     parser.add_argument("--output-dir", default="outputs/stage_b")
     parser.add_argument(
