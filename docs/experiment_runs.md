@@ -192,3 +192,84 @@ PPL smoke results:
 | FFN Rot-LM W4A4 | 579.691680 |
 
 Smoke conclusion: B4 model wrapper and PPL output path work on MPS. This short-context PPL is only a path check, not a formal quality conclusion.
+
+## 2026-05-08：Stage B Full Runs
+
+| Item | Value |
+| --- | --- |
+| Git commit | `030993fcc59af05c6b01f8c336a74f5aecfd3a99` |
+| Note | Runs include a dirty worktree with Stage B PPL performance fixes: CPU-side FFN weight prequantization and MPS-friendly Lloyd-Max threshold indexing. |
+
+### B1 Activation Full Run
+
+| Item | Value |
+| --- | --- |
+| Run ID | `20260508_090340+0800_stage_b_activation` |
+| Output dir | `outputs/stage_b/20260508_090340+0800_stage_b_activation` |
+| Device | `mps` |
+| Scope | all 22 layers, WikiText2 test, max samples 32, sequence length 512 |
+| Records | 1188 |
+| Duration | 35.697 seconds |
+
+Mean metrics across activation sites:
+
+| Method | Bits | Relative MSE | Cosine | SQNR dB |
+| --- | ---: | ---: | ---: | ---: |
+| Direct Absmax | 4 | 0.327630 | 0.820784 | 6.579584 |
+| Rot Absmax | 4 | 0.075469 | 0.963145 | 12.490349 |
+| Rot LM | 4 | 0.009297 | 0.995561 | 20.390117 |
+| Rot LM | 3 | 0.034815 | 0.983110 | 14.620511 |
+| Rot LM | 2 | 0.120526 | 0.940698 | 9.243337 |
+
+Conclusion: `Rot-LM A3` beats `Rot-Absmax A4` on average. Per-site, the only small exception is `k_proj_out`, where `Rot-LM A3` MSE is `0.032644` versus `Rot-Absmax A4` MSE `0.029189`.
+
+### B2 Local Linear / FFN Full Run
+
+| Item | Value |
+| --- | --- |
+| Run ID | `20260508_090430+0800_stage_b_local` |
+| Output dir | `outputs/stage_b/20260508_090430+0800_stage_b_local` |
+| Device | `mps` |
+| Scope | all 154 Linear layers and 22 FFN modules, WikiText2 test, max samples 8, sequence length 128 |
+| Linear records | 1078 |
+| FFN records | 154 |
+| Duration | 166.134 seconds |
+
+Selected mean relative MSE:
+
+| Group | Method | Relative MSE | Cosine |
+| --- | --- | ---: | ---: |
+| Linear | Rot-Absmax W4A4 | 0.228609 | 0.901790 |
+| Linear | Rot-LM W3A4 | 0.037209 | 0.982336 |
+| Linear | Rot-LM W4A3 | 0.037381 | 0.982784 |
+| FFN | FFN Rot-Absmax W4A4 | 0.477501 | 0.810050 |
+| FFN | FFN Rot-LM W3A4 | 0.073063 | 0.964408 |
+| FFN | FFN Rot-LM W4A3 | 0.079189 | 0.964333 |
+
+Conclusion: local Linear and FFN results both strongly support `Rot-LM W3A4` / `Rot-LM W4A3` over `Rot-Absmax W4A4`.
+
+### B4 FFN-only PPL Full Run
+
+| Item | Value |
+| --- | --- |
+| Run ID | `20260508_090737+0800_stage_b_ppl` |
+| Output dir | `outputs/stage_b/20260508_090737+0800_stage_b_ppl` |
+| Device | `mps` |
+| Dataset | WikiText2 raw test split |
+| Max samples | 512 |
+| Sequence length / stride | 2048 / 2048 |
+| Records | 6 |
+| Duration | 928.889 seconds |
+
+PPL results:
+
+| Method | PPL |
+| --- | ---: |
+| FP16 | 8.048573 |
+| FFN Direct Absmax W4A4 | 46090.420308 |
+| FFN Rot Absmax W4A4 | 2733.085720 |
+| FFN Rot LM W4A4 | 8.586876 |
+| FFN Rot LM W3A4 | 9.978913 |
+| FFN Rot LM W4A3 | 9.352936 |
+
+Stage B conclusion: B-line succeeds. `FFN Rot-LM W3A4` and `FFN Rot-LM W4A3` remain close to FP16 and are far better than `FFN Rot-Absmax W4A4`. This is numerical fake-quant evidence for lower W/A bit-width, not direct hardware acceleration evidence.

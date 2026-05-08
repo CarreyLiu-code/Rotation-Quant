@@ -81,15 +81,18 @@ def main() -> None:
 
     for method_name in args.methods:
         model, tokenizer = load_causal_lm(args.model_dir, dtype=args.dtype, device_map=args.device_map)
-        if args.device is not None and args.device_map is None:
-            model.to(args.device)
         quant_metadata: list[dict[str, object]] = []
         if method_name != "fp16":
+            # Build fake-quant FFN wrappers before moving the model to MPS.
+            # This keeps one-time weight codebook mapping on CPU and avoids
+            # paying that cost inside every forward pass.
             quant_metadata = apply_stage_b_ffn_fake_quant_(
                 model,
                 method_name=method_name,
                 block_size=args.block_size,
             )
+        if args.device is not None and args.device_map is None:
+            model.to(args.device)
         input_ids = tokenize_texts(tokenizer, list(texts), max_samples=args.max_samples)
         ppl = evaluate_causal_lm_ppl(
             model,

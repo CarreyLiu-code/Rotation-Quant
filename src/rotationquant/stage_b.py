@@ -105,12 +105,11 @@ def _block_rms_lloyd_max_quantize(x: torch.Tensor, bits: int, block_size: int) -
 
     codebook = torch.tensor(gaussian_lloyd_max_codebook(bits), device=x.device, dtype=torch.float32)
     boundaries = (codebook[:-1] + codebook[1:]) / 2
-    try:
-        indices = torch.bucketize(normalized, boundaries)
-    except (RuntimeError, NotImplementedError):
-        # Some PyTorch/MPS combinations lack bucketize coverage. This fallback
-        # keeps model-level fake quant numerically available, albeit slower.
-        indices = torch.bucketize(normalized.cpu(), boundaries.cpu()).to(device=x.device)
+    # Codebooks are tiny at 2-4 bits. A threshold loop avoids MPS bucketize
+    # fallback paths that would otherwise copy every activation to CPU.
+    indices = torch.zeros_like(normalized, dtype=torch.long)
+    for boundary in boundaries:
+        indices = indices + (normalized > boundary).to(torch.long)
     quantized = codebook[indices].reshape_as(blocks) * rms
     restored = quantized.reshape(*leading_shape, padded.shape[-1])
     if pad:

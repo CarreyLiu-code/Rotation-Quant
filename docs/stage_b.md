@@ -245,4 +245,110 @@ Stage B 代码框架已对齐 A 阶段的 run metadata 和输出目录规范。�
 
 B4 wrapper 会在初始化时预量化 FFN 权重，forward 中只量化 activation。`rot_lm` 的模型级 smoke 仍然较慢，因为 22 个 FFN 的 gate/up/down 权重需要做一次 Lloyd-Max codebook fake quant；正式 full PPL 运行应预留更长时间。
 
-正式结论需要在完成 B1/B2/B4 全量运行后补入本节，并同步记录到 `docs/experiment_runs.md`。
+## 正式全量结果
+
+### B1 Activation Full Run
+
+| Item | Value |
+| --- | --- |
+| Run ID | `20260508_090340+0800_stage_b_activation` |
+| Output dir | `outputs/stage_b/20260508_090340+0800_stage_b_activation` |
+| Device | `mps` |
+| Scope | all 22 layers, WikiText2 test, max samples 32, sequence length 512 |
+| Records | 1188 |
+| Captured activations | 132 |
+| Duration | 35.697 seconds |
+
+Mean metrics across activation sites:
+
+| Method | Bits | Relative MSE | Cosine | SQNR dB |
+| --- | ---: | ---: | ---: | ---: |
+| Direct Absmax | 4 | 0.327630 | 0.820784 | 6.579584 |
+| Rot Absmax | 4 | 0.075469 | 0.963145 | 12.490349 |
+| Rot LM | 4 | 0.009297 | 0.995561 | 20.390117 |
+| Rot LM | 3 | 0.034815 | 0.983110 | 14.620511 |
+| Rot LM | 2 | 0.120526 | 0.940698 | 9.243337 |
+
+Core comparison:
+
+| Site | Rot-Absmax A4 MSE | Rot-LM A3 MSE |
+| --- | ---: | ---: |
+| `attn_input` | 0.049948 | 0.032012 |
+| `ffn_input` | 0.046747 | 0.033693 |
+| `ffn_intermediate` | 0.214194 | 0.034427 |
+| `k_proj_out` | 0.029189 | 0.032644 |
+| `q_proj_out` | 0.060537 | 0.042478 |
+| `v_proj_out` | 0.052202 | 0.033637 |
+
+B1 conclusion: `Rot-LM A3` is better than `Rot-Absmax A4` on average and on most sites. The only observed exception is `k_proj_out`, where `Rot-Absmax A4` is slightly better.
+
+### B2 Local Linear / FFN Full Run
+
+| Item | Value |
+| --- | --- |
+| Run ID | `20260508_090430+0800_stage_b_local` |
+| Output dir | `outputs/stage_b/20260508_090430+0800_stage_b_local` |
+| Device | `mps` |
+| Scope | all 154 Linear layers and 22 FFN modules, WikiText2 test, max samples 8, sequence length 128 |
+| Linear records | 1078 |
+| FFN records | 154 |
+| Duration | 166.134 seconds |
+
+Linear mean metrics:
+
+| Method | Relative MSE | Cosine | SQNR dB |
+| --- | ---: | ---: | ---: |
+| Direct Absmax W4A4 | 0.613288 | 0.633419 | 3.553233 |
+| Rot Absmax W4A4 | 0.228609 | 0.901790 | 9.529216 |
+| Rot LM W4A4 | 0.015854 | 0.992299 | 20.221924 |
+| Rot LM W3A4 | 0.037209 | 0.982336 | 16.415885 |
+| Rot LM W4A3 | 0.037381 | 0.982784 | 16.350577 |
+| Rot LM W3A3 | 0.058215 | 0.973365 | 14.323914 |
+| Rot LM W2A4 | 0.109925 | 0.950351 | 11.338703 |
+
+FFN mean metrics:
+
+| Method | Relative MSE | Cosine | SQNR dB |
+| --- | ---: | ---: | ---: |
+| FFN Direct Absmax W4A4 | 0.969996 | 0.244356 | 0.800832 |
+| FFN Rot Absmax W4A4 | 0.477501 | 0.810050 | 3.600135 |
+| FFN Rot LM W4A4 | 0.031212 | 0.984782 | 15.330151 |
+| FFN Rot LM W3A4 | 0.073063 | 0.964408 | 11.562464 |
+| FFN Rot LM W4A3 | 0.079189 | 0.964333 | 11.106795 |
+| FFN Rot LM W3A3 | 0.121197 | 0.944023 | 9.253756 |
+
+B2 conclusion: both local Linear and full FFN results strongly support the Stage B hypothesis. `Rot-LM W3A4` and `Rot-LM W4A3` are much better than `Rot-Absmax W4A4`, even after the FFN gate/up/down nonlinearity.
+
+### B4 FFN-only PPL Full Run
+
+| Item | Value |
+| --- | --- |
+| Run ID | `20260508_090737+0800_stage_b_ppl` |
+| Output dir | `outputs/stage_b/20260508_090737+0800_stage_b_ppl` |
+| Device | `mps` |
+| Dataset | WikiText2 raw test split |
+| Max samples | 512 |
+| Sequence length / stride | 2048 / 2048 |
+| Records | 6 |
+| Duration | 928.889 seconds |
+
+PPL results:
+
+| Method | PPL |
+| --- | ---: |
+| FP16 | 8.048573 |
+| FFN Direct Absmax W4A4 | 46090.420308 |
+| FFN Rot Absmax W4A4 | 2733.085720 |
+| FFN Rot LM W4A4 | 8.586876 |
+| FFN Rot LM W3A4 | 9.978913 |
+| FFN Rot LM W4A3 | 9.352936 |
+
+B4 conclusion: `FFN Rot-LM W3A4` and `FFN Rot-LM W4A3` are both close to FP16 and dramatically better than `FFN Rot-Absmax W4A4`. This supports the B-line claim that Lloyd-Max in the rotated domain can reduce usable W/A bit-width, but it remains fake quant numerical evidence rather than hardware speed evidence.
+
+## 当前结论
+
+1. B1: `Rot-LM A3` is generally better than `Rot-Absmax A4`, so activation bit-width can likely move from A4 toward A3 in the rotated domain.
+2. B2: `Rot-LM W3A4` and `Rot-LM W4A3` remain much better than `Rot-Absmax W4A4` for both individual Linear layers and full FFN output.
+3. B4: FFN-only model-level PPL confirms the local trend. `FFN Rot-LM W3A4` PPL is `9.978913`, and `FFN Rot-LM W4A3` PPL is `9.352936`, both close to FP16 `8.048573`.
+4. Uniform rotated W4A4 is not enough for FFN-only W/A fake quant in this implementation; `FFN Rot-Absmax W4A4` PPL is `2733.085720`.
+5. Stage B passes its first-phase success criterion. The next reasonable step is B3 Structured QuaRot-FFN or moving to C-line attention/KV experiments, depending on whether the priority is FFN structural invariance or attention/KV behavior.
