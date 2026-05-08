@@ -273,3 +273,313 @@ PPL results:
 | FFN Rot LM W4A3 | 9.352936 |
 
 Stage B conclusion: B-line succeeds. `FFN Rot-LM W3A4` and `FFN Rot-LM W4A3` remain close to FP16 and are far better than `FFN Rot-Absmax W4A4`. This is numerical fake-quant evidence for lower W/A bit-width, not direct hardware acceleration evidence.
+
+## 2026-05-08：Stage C Planning and Run Record Policy
+
+Stage C 的实验计划和代码架构记录在 `docs/stage_c.md`。本节只是后续 C 阶段正式运行的人工记录入口，不包含实验结果。
+
+| Item | Value |
+| --- | --- |
+| Stage C doc | `docs/stage_c.md` |
+| Main scope | Attention/KV cache inner-product preservation, QJL residual, structured Attention fake quant |
+| Model | `TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T` |
+| Output root | `outputs/stage_c/` |
+| Run metadata rule | output directory name must match `run_metadata.json.run_id` |
+
+Planned run families:
+
+| Run family | Output directory pattern | Purpose |
+| --- | --- | --- |
+| C1 invariance | `outputs/stage_c/<YYYYMMDD_HHMMSS+0800_stage_c_invariance>` | post-RoPE Q/K head-wise rotation invariance sanity |
+| C2 KV local | `outputs/stage_c/<YYYYMMDD_HHMMSS+0800_stage_c_kv_local>` | Hadamard-LM K/V low-bit attention-local metrics |
+| C3 QJL residual | `outputs/stage_c/<YYYYMMDD_HHMMSS+0800_stage_c_qjl>` | Key residual inner-product correction |
+| C4 Attention layer | `outputs/stage_c/<YYYYMMDD_HHMMSS+0800_stage_c_attention_layer>` | q/k/v/o W/A fake quant plus KV cache quant, layer-level |
+| C5 PPL | `outputs/stage_c/<YYYYMMDD_HHMMSS+0800_stage_c_ppl>` | Attention-only model-level PPL |
+| C5 accuracy | `outputs/stage_c/<YYYYMMDD_HHMMSS+0800_stage_c_accuracy>` | optional zero-shot accuracy |
+
+Each formal Stage C run should append:
+
+| Field | Required |
+| --- | --- |
+| Run ID | yes |
+| Output dir | yes |
+| Git commit | yes |
+| Dirty status | yes |
+| Device and dataset | yes |
+| Scope | layer limit, max samples, sequence length |
+| Core table | yes |
+| Conclusion | numerical quality only; no native low-bit acceleration claim |
+
+## 2026-05-08：Stage C Implementation Smoke Tests
+
+| Item | Value |
+| --- | --- |
+| Git commit before implementation | `e053af4b9f6aa7ab21d4047389572d085dfcda97` |
+| Note | Smoke runs were executed while Stage C files were still uncommitted, so `run_metadata.json` records a dirty worktree. |
+
+### C1 Invariance Smoke
+
+| Item | Value |
+| --- | --- |
+| Run ID | `20260508_100235+0800_stage_c_invariance` |
+| Output dir | `outputs/stage_c/20260508_100235+0800_stage_c_invariance` |
+| Scope | layer 0, WikiText2 test, max samples 2, sequence length 64 |
+| Records | 1 |
+| Duration | 23.197 seconds |
+
+Selected metrics:
+
+| Metric | Value |
+| --- | ---: |
+| Score relative MSE | 0.0 |
+| Max score abs diff | 0.00000167 |
+| Output relative MSE | 0.0 |
+| Output cosine | 1.00000048 |
+
+Conclusion: post-RoPE Q/K head-wise Hadamard rotation preserves attention score and output within numerical tolerance.
+
+### C2 KV Local Smoke
+
+| Item | Value |
+| --- | --- |
+| Run ID | `20260508_100425+0800_stage_c_kv_local` |
+| Output dir | `outputs/stage_c/20260508_100425+0800_stage_c_kv_local` |
+| Scope | layer 0, selected KV methods, WikiText2 test, max samples 2, sequence length 64 |
+| Records | 4 |
+| Duration | 21.074 seconds |
+
+Selected mean metrics:
+
+| Method | Bits | Score rel MSE | Softmax KL | Output cosine |
+| --- | --- | ---: | ---: | ---: |
+| Absmax | K4V4 | 0.045601 | 0.012718 | 0.968360 |
+| Hadamard-LM | K4V4 | 0.007246 | 0.002742 | 0.992596 |
+| Hadamard-LM | K3V4 | 0.029824 | 0.013261 | 0.966418 |
+
+Conclusion: C2 output path works. On this tiny sample, `Hadamard-LM K4V4` is clearly better than `Absmax K4V4`; `Hadamard-LM K3V4` is numerically plausible but needs full local validation.
+
+### C3 QJL Smoke
+
+| Item | Value |
+| --- | --- |
+| Run ID | `20260508_100709+0800_stage_c_qjl` |
+| Output dir | `outputs/stage_c/20260508_100709+0800_stage_c_qjl` |
+| Scope | layer 0, K2/K3 pure and QJL methods, max samples 2, sequence length 64 |
+| Records | 4 |
+| Duration | 22.347 seconds |
+
+Selected mean metrics:
+
+| Method | Bits | Score rel MSE | Softmax KL | Output cosine |
+| --- | --- | ---: | ---: | ---: |
+| Hadamard-LM K2 | K2 | 0.081561 | 0.028200 | 0.962390 |
+| Hadamard-LM K2 + QJL | K2+QJL | 0.105033 | 0.043932 | 0.929466 |
+| Hadamard-LM K3 | K3 | 0.029824 | 0.013261 | 0.966418 |
+| Hadamard-LM K3 + QJL | K3+QJL | 0.037097 | 0.016127 | 0.967218 |
+
+Conclusion: QJL implementation runs and writes metrics. This tiny sample does not show QJL improvement, so QJL should not be promoted into C5 full PPL unless the larger C3 run shows a benefit.
+
+### C4 Attention-layer Smoke
+
+| Item | Value |
+| --- | --- |
+| Run ID | `20260508_101201+0800_stage_c_attention_layer` |
+| Output dir | `outputs/stage_c/20260508_101201+0800_stage_c_attention_layer` |
+| Scope | layer 0, `fp16` and `attn_rot_lm_w4a4_hlm_k4v4`, max samples 2, sequence length 64 |
+| Records | 2 |
+| Duration | 20.579 seconds |
+
+Selected mean metrics:
+
+| Method | Projection rel MSE | Score rel MSE | Softmax KL | Layer output rel MSE | Layer output cosine |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Attn Rot-LM W4A4 + HLM K4V4 | 0.058351 | 0.010309 | 0.004012 | 0.042903 | 0.978361 |
+
+Conclusion: q/k/v/o W/A fake quant plus post-RoPE KV fake quant can be run as a complete Attention-layer simulation.
+
+### C5 PPL Smoke
+
+| Item | Value |
+| --- | --- |
+| Run ID | `20260508_101252+0800_stage_c_ppl` |
+| Output dir | `outputs/stage_c/20260508_101252+0800_stage_c_ppl` |
+| Scope | `fp16` and `attn_rot_lm_w4a4_hlm_k4v4`, WikiText2 test, max samples 2, sequence length/stride 64/64 |
+| Records | 2 |
+| Duration | 30.706 seconds |
+
+PPL path-check results:
+
+| Method | PPL |
+| --- | ---: |
+| FP16 | 617.328152 |
+| Attn Rot-LM W4A4 + HLM K4V4 | 6.384535 |
+
+Conclusion: the Attention-only model wrapper runs through causal LM PPL on MPS. This short-context smoke is only an interface/path check and should not be interpreted as a model quality result.
+
+## 2026-05-08：Stage C Full Runs
+
+| Item | Value |
+| --- | --- |
+| Git commit | `e053af49591b23541ed63cd5794fff911a6d0f29` |
+| Dirty status | Stage C code/docs were uncommitted; `ZJU-Beamer-Template-main/` was also untracked and unrelated. |
+| Runtime | `torch 2.11.0`, `transformers 5.8.0`, MPS available |
+| Model | `models/TinyLlama-1.1B-intermediate-step-1431k-3T` |
+| Interpretation boundary | Fake quant numerical quality only; no native low-bit speedup claim. |
+
+### C1 Invariance Full Run
+
+| Item | Value |
+| --- | --- |
+| Run ID | `20260508_105020+0800_stage_c_invariance` |
+| Output dir | `outputs/stage_c/20260508_105020+0800_stage_c_invariance` |
+| Device | `mps` |
+| Scope | all 22 layers, WikiText2 test, max samples 8, sequence length 128 |
+| Records | 22 |
+| Duration | 19.756 seconds |
+
+Mean metrics:
+
+| Score rel MSE | Max score abs diff | Output rel MSE | Output cosine |
+| ---: | ---: | ---: | ---: |
+| 0.0 | 0.00001214 | 0.0 | 1.00001176 |
+
+Conclusion: post-RoPE Q/K head-wise Hadamard invariance holds across all 22 layers under the formal local setting.
+
+### C2 KV Local Full Run
+
+| Item | Value |
+| --- | --- |
+| Run ID | `20260508_102337+0800_stage_c_kv_local` |
+| Output dir | `outputs/stage_c/20260508_102337+0800_stage_c_kv_local` |
+| Device | `mps` |
+| Scope | all 22 layers, WikiText2 test, max samples 8, sequence length 128 |
+| Records | 198 |
+| Duration | 27.978 seconds |
+
+Mean metrics:
+
+| Method | Bits | Score rel MSE | Softmax KL | Top-k overlap | Output cosine |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Absmax | K4V4 | 0.012673 | 0.238097 | 0.688388 | 0.970790 |
+| Absmax | K3V4 | 0.057856 | 0.810398 | 0.504865 | 0.908665 |
+| Absmax | K4V3 | 0.012673 | 0.238097 | 0.688388 | 0.957904 |
+| Hadamard-LM | K4V4 | 0.003110 | 0.052050 | 0.818279 | 0.992406 |
+| Hadamard-LM | K3V4 | 0.011561 | 0.183433 | 0.690212 | 0.976442 |
+| Hadamard-LM | K4V3 | 0.003110 | 0.052050 | 0.818279 | 0.988012 |
+| Hadamard-LM | K3V3 | 0.011561 | 0.183433 | 0.690212 | 0.972211 |
+| Hadamard-LM | K2V4 | 0.042143 | 0.565414 | 0.534261 | 0.927240 |
+
+Conclusion: C2 supports the KV-local hypothesis. `Hadamard-LM K4V4` is much better than `Absmax K4V4`, and `Hadamard-LM K3V4` is close to or slightly better than `Absmax K4V4` on score error, KL, top-k overlap, and output cosine. `K2V4` is a clear failure boundary.
+
+### C3 QJL Sensitive-layer Gate Run
+
+| Item | Value |
+| --- | --- |
+| Run ID | `20260508_102515+0800_stage_c_qjl` |
+| Output dir | `outputs/stage_c/20260508_102515+0800_stage_c_qjl` |
+| Device | `mps` |
+| Scope | C2 KL-sensitive layers `16,19,20,21`, WikiText2 test, max samples 8, sequence length 128 |
+| Records | 16 |
+| Duration | 21.539 seconds |
+
+Mean metrics:
+
+| Method | Bits | Score rel MSE | Softmax KL | Top-k overlap | Output cosine |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Hadamard-LM K2 | K2 | 0.037739 | 1.234568 | 0.504553 | 0.887354 |
+| Hadamard-LM K2 + QJL | K2+QJL | 0.061972 | 2.057504 | 0.453162 | 0.859132 |
+| Hadamard-LM K3 | K3 | 0.011456 | 0.392211 | 0.660675 | 0.967200 |
+| Hadamard-LM K3 + QJL | K3+QJL | 0.017640 | 0.622243 | 0.610620 | 0.947417 |
+
+Conclusion: QJL residual does not improve the selected sensitive layers. It reduces mean inner-product bias, but score relative MSE, softmax KL, top-k overlap, and output cosine all get worse.
+
+### C3 QJL All-layer Supplemental Run
+
+| Item | Value |
+| --- | --- |
+| Run ID | `20260508_104441+0800_stage_c_qjl` |
+| Output dir | `outputs/stage_c/20260508_104441+0800_stage_c_qjl` |
+| Device | `mps` |
+| Scope | all 22 layers, WikiText2 test, max samples 8, sequence length 128 |
+| Records | 88 |
+| Duration | 23.839 seconds |
+
+Mean metrics:
+
+| Method | Bits | Score rel MSE | Softmax KL | Top-k overlap | Output cosine |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Hadamard-LM K2 | K2 | 0.042143 | 0.565414 | 0.534261 | 0.927240 |
+| Hadamard-LM K2 + QJL | K2+QJL | 0.059468 | 0.966018 | 0.491696 | 0.889142 |
+| Hadamard-LM K3 | K3 | 0.011561 | 0.183433 | 0.690212 | 0.976442 |
+| Hadamard-LM K3 + QJL | K3+QJL | 0.017579 | 0.297445 | 0.645228 | 0.960473 |
+
+Conclusion: all-layer C3 confirms the gate result. QJL is not included in C5 PPL because it worsens score relative MSE, softmax KL, top-k overlap, and output cosine for both K2 and K3 bases.
+
+### C4 Attention-layer Structured Full Run
+
+| Item | Value |
+| --- | --- |
+| Run ID | `20260508_102632+0800_stage_c_attention_layer` |
+| Output dir | `outputs/stage_c/20260508_102632+0800_stage_c_attention_layer` |
+| Device | `mps` |
+| Scope | all 22 Attention layers, WikiText2 test, max samples 8, sequence length 128 |
+| Records | 132 |
+| Duration | 36.826 seconds |
+
+Mean metrics:
+
+| Method | Linear bits | KV bits | Projection rel MSE | Score rel MSE | Softmax KL | Layer output rel MSE | Layer output cosine |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Direct Absmax + Absmax KV | W4A4 | K4V4 | 0.363401 | 0.128626 | 0.599042 | 1.314227 | 0.250457 |
+| Rot Absmax + HLM KV | W4A4 | K4V4 | 0.143706 | 0.043899 | 0.160127 | 1.618342 | 0.597002 |
+| Rot-LM + HLM KV | W4A4 | K4V4 | 0.023228 | 0.005036 | 0.057384 | 0.105883 | 0.947851 |
+| Rot-LM + HLM KV | W3A4 | K3V4 | 0.054862 | 0.018479 | 0.187293 | 0.287546 | 0.864589 |
+| Rot-LM + HLM KV | W4A3 | K4V3 | 0.053374 | 0.008580 | 0.072355 | 0.186937 | 0.907371 |
+
+Conclusion: C4 local Attention-layer metrics strongly favor Rot-LM over direct/rotated absmax. `Rot-LM W3A4 + HLM K3V4` keeps much better layer output quality than `Rot-Absmax W4A4 + HLM K4V4`, but it is still visibly worse than `Rot-LM W4A4 + HLM K4V4`.
+
+### C5 Attention-only PPL Full Run
+
+| Item | Value |
+| --- | --- |
+| Run ID | `20260508_102751+0800_stage_c_ppl` |
+| Output dir | `outputs/stage_c/20260508_102751+0800_stage_c_ppl` |
+| Device | `mps` |
+| Dataset | WikiText2 raw test split |
+| Max samples | 512 |
+| Sequence length / stride | 2048 / 2048 |
+| Records | 6 |
+| Duration | 689.864 seconds |
+
+PPL results:
+
+| Method | PPL |
+| --- | ---: |
+| FP16 | 8.048573 |
+| Attention Direct Absmax W4A4 + Absmax K4V4 | 2758.251695 |
+| Attention Rot Absmax W4A4 + HLM K4V4 | 17607.464742 |
+| Attention Rot-LM W4A4 + HLM K4V4 | 12044.785422 |
+| Attention Rot-LM W3A4 + HLM K3V4 | 8105.302082 |
+| Attention Rot-LM W4A3 + HLM K4V3 | 8362.464387 |
+
+Stage C conclusion: KV-local and single-layer Attention results are encouraging, but the current Attention-only model-level wrapper does not preserve PPL. This suggests the first C5 implementation is not yet a usable full-model quantization path; likely next checks are residual stream / `o_proj` interaction, accumulation of attention-layer errors across depth, and whether value rotation should be structurally absorbed rather than reconstructed locally. The useful positive result remains C2: post-RoPE Hadamard-LM can make `K3V4` locally competitive with uniform `K4V4`; the negative result is that this does not yet survive full Attention-only replacement.
+
+## 2026-05-08：Stage C Refine Plan
+
+Detailed Stage C refine records live in `docs/stage_c_refine.md`.
+
+| Item | Value |
+| --- | --- |
+| Refine doc | `docs/stage_c_refine.md` |
+| Output root | `outputs/stage_c_refine/` |
+| Main change | Value rotation remains in attention output and is absorbed into `o_proj.weight` using independent H64 blocks |
+| Q/K rule | keep per-head H64 score rotation; no cross-head H128 mixing |
+
+## 2026-05-08：Stage C Refine Formal Runs
+
+Detailed tables and conclusions live in `docs/stage_c_refine.md`.
+
+| Run | Run ID | Output dir | Summary |
+| --- | --- | --- | --- |
+| C4-refine Attention-layer local full | `20260508_182056+0800_stage_c_refine_attention_layer` | `outputs/stage_c_refine/20260508_182056+0800_stage_c_refine_attention_layer` | identity passes; best structured local method is `attn_rot_lm_w4a4_hlm_k4v4_oabsorb` |
+| C5-refine Attention-only PPL full | `20260508_182156+0800_stage_c_refine_ppl` | `outputs/stage_c_refine/20260508_182156+0800_stage_c_refine_ppl` | identity matches FP16; `KV-only K4V4` PPL 8.204482; best structured method `W4A4/K4V4` PPL 8.614497 |

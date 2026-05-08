@@ -1,0 +1,3 @@
+method_key,method,linear_method,linear_bits,w_bits,a_bits,kv_method,kv_bits,k_bits,v_bits,qjl_method,compute_interpretation,quantized_attention_modules,ppl,dataset,dataset_config,split,max_samples,sequence_length,stride
+fp16,fp16,fp16,FP16,16,16,fp16,K16V16,16,16,,baseline,0,617.3281523293532,wikitext,wikitext-2-raw-v1,test,2,64,64
+attn_rot_lm_w4a4_hlm_k4v4,attn_rot_lm_w4a4_hlm_k4v4,rot_lm,W4A4,4,4,hadamard_lm,K4V4,4,4,,rotated non-uniform W/A and KV fake quant,22,6.38453472796982,wikitext,wikitext-2-raw-v1,test,2,64,64

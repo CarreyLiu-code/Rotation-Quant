@@ -1,0 +1,4 @@
+method_key,method,linear_method,linear_bits,w_bits,a_bits,kv_method,kv_bits,k_bits,v_bits,value_path,compute_interpretation,quantized_attention_modules,ppl,dataset,dataset_config,split,max_samples,sequence_length,stride
+fp16,fp16,fp16,FP16,16,16,fp16,K16V16,16,16,reference,baseline,0,617.3281523293532,wikitext,wikitext-2-raw-v1,test,2,64,64
+attn_identity_fp16,attn_identity_fp16,fp16,FP16,16,16,fp16,K16V16,16,16,reconstruct,identity attention wrapper; no quantization,22,4.842428256349744,wikitext,wikitext-2-raw-v1,test,2,64,64
+attn_kv_only_hlm_k4v4_oabsorb,attn_kv_only_hlm_k4v4_oabsorb,fp16,FP16,16,16,hadamard_lm,K4V4,4,4,o_proj_absorb,KV-only HLM K4V4 with value rotation absorbed into o_proj,22,2.7808253025078735,wikitext,wikitext-2-raw-v1,test,2,64,64

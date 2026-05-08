@@ -1,0 +1,7 @@
+method_key,method,linear_method,linear_bits,w_bits,a_bits,kv_method,kv_bits,k_bits,v_bits,qjl_method,compute_interpretation,quantized_attention_modules,ppl,dataset,dataset_config,split,max_samples,sequence_length,stride
+fp16,fp16,fp16,FP16,16,16,fp16,K16V16,16,16,,baseline,0,8.048572581977634,wikitext,wikitext-2-raw-v1,test,512,2048,2048
+attn_direct_absmax_w4a4_absmax_k4v4,attn_direct_absmax_w4a4_absmax_k4v4,direct_absmax,W4A4,4,4,absmax,K4V4,4,4,,direct W/A fake quant plus uniform KV fake quant,22,2758.2516945450498,wikitext,wikitext-2-raw-v1,test,512,2048,2048
+attn_rot_absmax_w4a4_hlm_k4v4,attn_rot_absmax_w4a4_hlm_k4v4,rot_absmax,W4A4,4,4,hadamard_lm,K4V4,4,4,,rotated uniform W/A fake quant plus rotated KV fake quant,22,17607.464742118136,wikitext,wikitext-2-raw-v1,test,512,2048,2048
+attn_rot_lm_w4a4_hlm_k4v4,attn_rot_lm_w4a4_hlm_k4v4,rot_lm,W4A4,4,4,hadamard_lm,K4V4,4,4,,rotated non-uniform W/A and KV fake quant,22,12044.78542229308,wikitext,wikitext-2-raw-v1,test,512,2048,2048
+attn_rot_lm_w3a4_hlm_k3v4,attn_rot_lm_w3a4_hlm_k3v4,rot_lm,W3A4,3,4,hadamard_lm,K3V4,3,4,,weight and key bit reduction in fake quant,22,8105.302081889271,wikitext,wikitext-2-raw-v1,test,512,2048,2048
+attn_rot_lm_w4a3_hlm_k4v3,attn_rot_lm_w4a3_hlm_k4v3,rot_lm,W4A3,4,3,hadamard_lm,K4V3,4,3,,activation and value bit reduction in fake quant,22,8362.464386724363,wikitext,wikitext-2-raw-v1,test,512,2048,2048

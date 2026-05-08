@@ -1,0 +1,50 @@
+{
+  "experiment": "stage_c_invariance",
+  "run_id": "20260508_100235+0800_stage_c_invariance",
+  "timestamp": "2026-05-08T10:02:35+08:00",
+  "timezone": "Asia/Shanghai",
+  "cwd": "/Users/carreyliu/Projects/RotationQuantDemo",
+  "output_dir": "outputs/stage_c/20260508_100235+0800_stage_c_invariance",
+  "git_commit": "e053af49591b23541ed63cd5794fff911a6d0f29",
+  "git_status_short": "M docs/experiment_runs.md\n?? ZJU-Beamer-Template-main/\n?? docs/stage_c.md\n?? experiments/stage_c_accuracy.py\n?? experiments/stage_c_attention_layer.py\n?? experiments/stage_c_invariance.py\n?? experiments/stage_c_kv_local.py\n?? experiments/stage_c_ppl.py\n?? experiments/stage_c_qjl.py\n?? experiments/summarize_stage_c.py\n?? scripts/run_stage_c_accuracy.sh\n?? scripts/run_stage_c_attention_layer.sh\n?? scripts/run_stage_c_invariance.sh\n?? scripts/run_stage_c_kv_local.sh\n?? scripts/run_stage_c_ppl.sh\n?? scripts/run_stage_c_qjl.sh\n?? src/rotationquant/attention_capture.py\n?? src/rotationquant/stage_c.py\n?? src/rotationquant/stage_c_model.py",
+  "python": "3.11.14",
+  "platform": "macOS-15.7.4-arm64-arm-64bit",
+  "package_versions": {
+    "torch": "2.11.0",
+    "transformers": "5.8.0",
+    "safetensors": "0.7.0",
+    "datasets": "4.8.5",
+    "numpy": "2.4.3",
+    "pandas": "3.0.2",
+    "tqdm": "4.67.3"
+  },
+  "torch_runtime": {
+    "torch_importable": true,
+    "mps_built": true,
+    "mps_available": true,
+    "mps_device_count": 1
+  },
+  "args": {
+    "model_dir": "models/TinyLlama-1.1B-intermediate-step-1431k-3T",
+    "output_dir": "outputs/stage_c",
+    "dtype": "float16",
+    "device_map": null,
+    "device": "mps",
+    "dataset": "wikitext",
+    "dataset_config": "wikitext-2-raw-v1",
+    "split": "test",
+    "text_column": "text",
+    "max_samples": 2,
+    "sequence_length": 64,
+    "layer_limit": 1,
+    "pass_threshold": 1e-05
+  },
+  "record_count": 1,
+  "captured_attention_count": 1,
+  "duration_seconds": 23.197,
+  "output_files": [
+    "invariance_metrics.jsonl",
+    "invariance_metrics.csv",
+    "summary.md"
+  ]
+}

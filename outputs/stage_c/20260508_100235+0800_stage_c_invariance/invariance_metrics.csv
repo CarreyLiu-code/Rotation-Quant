@@ -1,0 +1,2 @@
+head_dim,kv_heads,layer,layer_index,max_score_abs_diff,method,output_cosine,output_relative_mse,pass,q_heads,score_relative_mse,sequence_length,softmax_kl
+64,4,model.layers.0.self_attn,0,1.6689300537109375e-06,no_quant_headwise_hadamard,1.0000004768371582,5.3851983094176104e-14,True,32,2.134931466368003e-14,9,1.6934256219514054e-09
