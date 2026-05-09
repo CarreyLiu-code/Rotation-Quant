@@ -51,18 +51,3 @@
 * 通过将全局旋转分解为重叠的局部旋转（Local Rotation） ，或者使用 Kronecker 分解将其拆分为 **$O(N \log_2 N)$** 的 FHT 单元和极小的矩阵乘法 (MM) 单元 ，可以在极小的面积下达到等效的精度。
 * Local Rotation配图：figures/local rotation.png
 * Kronecker Decompsition配图:figures/kronecker decomposition.png
-
----
-
-### 04 超低位宽量化 Demo
-
-* **Demo 实验目的：**
-  * 验证 Hadamard Rotation 是否能在 W4A4（或类似超低位宽）下有效缓解 Attention (Q, K 矩阵) 的量化精度损失。
-* **Demo 流程设计说明：**
-  1. **数据合成与异常注入：** 随机生成全精度的 Q 和 K 矩阵，并人为在少数 Token 上注入极大的 Outlier（模拟长尾分布）。
-  2. **Baseline 1 (全精度)：** 计算标准的 FP32 Attention Scores (**$Q \cdot K^T / \sqrt{d}$**)。
-  3. **Baseline 2 (直接量化)：** 对注入 Outlier 的 Q 和 K 直接使用 Min-Max 对称量化至 4-bit，计算 Attention 并评估 MSE Error。
-  4. **Rotation 组：** 生成对应的 Hadamard 矩阵，对 Q 和 K 分别进行旋转 (**$Q_{rot} = Q \cdot H, K_{rot} = K \cdot H$**)。在旋转域内进行 4-bit 量化，利用正交性直接计算 Attention Scores。
-* **预期展示图表：**
-  * **分布热力图/直方图 (Histograms)：** 直观对比旋转前（存在刺眼的 Outlier 尖峰）和旋转后（呈现完美的中心对称高斯分布）的激活值状态。
-  * **误差对比柱状图：** 展示直接量化产生的巨大 MSE 误差，对比加入 Hadamard Rotation 后 MSE 误差的断崖式下降。

@@ -1,0 +1,151 @@
+% !TeX program = xelatex
+% !TeX root = ./main.tex
+\documentclass[10pt,aspectratio=169,xcolor={dvipsnames}]{beamer}
+
+\usetheme{blei}
+\AtBeginSection[]{}
+
+\usepackage{xeCJK}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+
+\setCJKmainfont[AutoFakeBold=2,AutoFakeSlant=.2]{STSong}
+\setCJKsansfont[AutoFakeBold=2,AutoFakeSlant=.2]{STSong}
+\setCJKmonofont{STSong}
+\setbeamertemplate{caption}{\raggedright\insertcaption\par}
+\setbeamertemplate{caption label separator}{}
+\setbeamersize{text margin left=1.4em,text margin right=1.4em}
+
+\newcommand{\img}[2][]{\includegraphics[#1]{\detokenize{#2}}}
+\newcommand{\keypoint}[1]{\textbf{#1}}
+
+\title{Hadamard Rotation for Low-Bit LLM Inference}
+\author{}
+\date{}
+
+\begin{document}
+
+\begin{frame}{Contents}
+  \vspace{0.4em}
+  \begin{enumerate}
+    \widesep
+    \item Hadamard Rotation：定义与计算不变性
+    \item 为什么引入 Rotation：Memory Wall 与 Outliers
+    \item 硬件映射：FWHT 蝶形网络
+    \item 从全局旋转到局部旋转
+    \item Non-PoT 维度与 Kronecker 分解
+  \end{enumerate}
+  \vfill
+  {\footnotesize Source: ISSCC RotationQuant slides }
+\end{frame}
+
+\begin{frame}{Hadamard Rotation：定义与计算不变性}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.42\textwidth}
+      \begin{itemize}
+        \item \keypoint{正交性：}
+        \[
+          Q Q^{T}=I
+        \]
+        rotation 保持 L2 norm，不改变向量能量。
+        \item \keypoint{自逆性：}
+        \[
+          H^{-1}=H
+        \]
+        Hadamard 矩阵正交且对称，逆变换开销低。
+        \item \keypoint{线性计算不变性：}
+        \[
+          AW^{T}=(AH)(H^{T}W^{T})
+        \]
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.56\textwidth}
+      \vspace{0.2em}
+      \img[width=\linewidth,height=0.70\textheight,keepaspectratio]{../figures/computational invariance.png}
+      \vspace{0.2em}
+
+      {\footnotesize 旋转矩阵可插入 activation 与 weight 之间，并在离线阶段吸收到权重中。}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{为什么需要 Rotation：Memory Wall 与 Outliers}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.48\textwidth}
+      \begin{itemize}
+        \item \keypoint{Memory Wall：}自回归解码阶段需要反复读取权重，访存带宽成为主要瓶颈。
+        \item \keypoint{低位宽量化：}W4A4 / W4A8 可降低带宽压力，但对数值分布更敏感。
+        \item \keypoint{Activation Outliers：}少量极大值会主导量化 scale，使多数正常值分辨率下降。
+        \item \keypoint{Outlier-Free：}Hadamard rotation 将集中能量打散到各维度，使分布更平滑。
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \centering
+      \img[height=0.76\textheight,keepaspectratio]{../figures/outlier-free.png}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{硬件映射：FWHT 蝶形网络}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.40\textwidth}
+      \begin{itemize}
+        \item \keypoint{复杂度：}
+        \[
+          O(N^{2}) \rightarrow O(N\log_{2}N)
+        \]
+        避免完整矩阵乘法。
+        \item \keypoint{数据路径：}核心由加法、减法和 routing / MUX 构成。
+        \item \keypoint{PPA 收益：}较短关键路径与较低门级复杂度，有利于吞吐率和功耗。
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.58\textwidth}
+      \centering
+      \img[width=\linewidth,height=0.76\textheight,keepaspectratio]{../figures/FWHT.png}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{从全局旋转到局部旋转}
+  \begin{itemize}
+    \item \keypoint{全局旋转的问题：}通道维度很大时，完整 FWHT 网络深度和面积仍可能过高。
+    \item \keypoint{Subspace / Local Rotation：}在较小子空间内执行旋转，配合 group quantization 降低硬件映射成本。
+    \item \keypoint{设计目标：}在保持 outlier smoothing 效果的同时，控制面积、routing 和时序压力。
+  \end{itemize}
+
+  \vspace{0.6em}
+  \centering
+  \img[width=0.88\linewidth,height=0.44\textheight,keepaspectratio]{../figures/local rotation.png}
+\end{frame}
+
+\begin{frame}{Non-PoT 维度与 Kronecker 分解}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.42\textwidth}
+      \begin{itemize}
+        \item LLM 通道维度不总是 2 的幂，直接构造大 Hadamard 变换不总是匹配。
+        \item \keypoint{Kronecker 分解：}
+        \[
+          H_{Ch}=H_{N}\otimes H_{M}
+        \]
+        将大维度旋转拆成可映射的小 FHT 单元与小矩阵乘法单元。
+        \item \keypoint{Takeaways：}
+        \begin{itemize}
+          \item 数值上保持计算等价；
+          \item 分布上削弱 outliers；
+          \item 硬件上更容易做局部化映射。
+        \end{itemize}
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.56\textwidth}
+      \centering
+      \img[width=\linewidth,height=0.70\textheight,keepaspectratio]{../figures/kronecker decomposition.png}
+      \vspace{0.3em}
+
+      {\footnotesize Rotation 的价值在于同时连接数值分布、量化位宽和硬件数据路径。}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\end{document}
