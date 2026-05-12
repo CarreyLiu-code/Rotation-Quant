@@ -34,6 +34,8 @@ def parse_args() -> argparse.Namespace:
         ],
     )
     parser.add_argument("--block-size", type=int, default=128)
+    parser.add_argument("--mxfp4-group-size", type=int, default=32)
+    parser.add_argument("--rotation-seed", type=int, default=0)
     parser.add_argument("--dtype", choices=["float16", "bfloat16", "float32"], default="float16")
     parser.add_argument("--device-map", default=None)
     parser.add_argument("--device", default=None)
@@ -59,7 +61,13 @@ def method_metadata(method_name: str, quantized_layers: int) -> dict[str, object
             "kv_bits": "K16V16",
             "k_bits": 16,
             "v_bits": 16,
+            "kv_rotation_backend": "none",
+            "kv_block_size": "",
+            "linear_rotation_backend": "none",
             "value_path": "reference",
+            "block_size": "",
+            "o_proj_domain_block_size": "",
+            "mxfp4_group_size": "",
             "compute_interpretation": "baseline",
             "quantized_attention_modules": 0,
         }
@@ -76,14 +84,22 @@ def method_metadata(method_name: str, quantized_layers: int) -> dict[str, object
         "kv_bits": kv_spec.label,
         "k_bits": kv_spec.k_bits,
         "v_bits": kv_spec.v_bits,
+        "kv_rotation_backend": kv_spec.rotation_backend,
+        "kv_block_size": kv_spec.kv_block_size,
+        "linear_rotation_backend": (
+            STAGE_B_METHODS[spec.linear_spec.method].rotation_backend or "none"
+            if spec.linear_spec is not None
+            else "none"
+        ),
         "value_path": spec.value_path,
+        "o_proj_domain_block_size": kv_spec.kv_block_size if spec.value_path == "o_proj_absorb" else "",
         "compute_interpretation": spec.compute_interpretation,
         "quantized_attention_modules": quantized_layers,
     }
 
 
 def write_summary(records: list[dict[str, object]], output_dir: Path) -> None:
-    columns = ["method_key", "linear_bits", "kv_bits", "value_path", "ppl", "compute_interpretation"]
+    columns = ["method_key", "linear_bits", "kv_bits", "block_size", "kv_block_size", "value_path", "ppl", "compute_interpretation"]
     lines = ["# Stage C C5 PPL Summary", "", "| " + " | ".join(columns) + " |", "| " + " | ".join("---" for _ in columns) + " |"]
     for record in records:
         lines.append("| " + " | ".join(str(record.get(column, "")) for column in columns) + " |")
@@ -110,6 +126,8 @@ def main() -> None:
                 model,
                 method_name,
                 block_size=args.block_size,
+                mxfp4_group_size=args.mxfp4_group_size,
+                rotation_seed=args.rotation_seed,
             )
         if args.device is not None and args.device_map is None:
             model.to(args.device)
@@ -124,6 +142,8 @@ def main() -> None:
         record = {
             "method_key": method_name,
             **method_metadata(method_name, quantized_layers=len(quant_metadata)),
+            "block_size": args.block_size if method_name != "fp16" else "",
+            "mxfp4_group_size": args.mxfp4_group_size if method_name != "fp16" else "",
             "ppl": ppl,
             "dataset": args.dataset,
             "dataset_config": args.dataset_config,

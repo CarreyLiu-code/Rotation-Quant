@@ -31,6 +31,8 @@ def parse_args() -> argparse.Namespace:
         ],
     )
     parser.add_argument("--block-size", type=int, default=128)
+    parser.add_argument("--mxfp4-group-size", type=int, default=32)
+    parser.add_argument("--rotation-seed", type=int, default=0)
     parser.add_argument("--dtype", choices=["float16", "bfloat16", "float32"], default="float16")
     parser.add_argument("--device-map", default=None)
     parser.add_argument("--device", default=None)
@@ -52,6 +54,9 @@ def method_metadata(method_name: str, quantized_layers: int) -> dict[str, object
             "w_bits": 16,
             "a_bits": 16,
             "rotation": "none",
+            "rotation_backend": "none",
+            "block_size": "",
+            "mxfp4_group_size": "",
             "compute_interpretation": "baseline",
             "quantized_ffn_modules": 0,
         }
@@ -63,6 +68,9 @@ def method_metadata(method_name: str, quantized_layers: int) -> dict[str, object
         "w_bits": spec.w_bits,
         "a_bits": spec.a_bits,
         "rotation": method.rotation,
+        "rotation_backend": method.rotation_backend or "none",
+        "block_size": "",
+        "mxfp4_group_size": "",
         "compute_interpretation": method.compute_interpretation,
         "quantized_ffn_modules": quantized_layers,
     }
@@ -90,6 +98,8 @@ def main() -> None:
                 model,
                 method_name=method_name,
                 block_size=args.block_size,
+                mxfp4_group_size=args.mxfp4_group_size,
+                rotation_seed=args.rotation_seed,
             )
         if args.device is not None and args.device_map is None:
             model.to(args.device)
@@ -111,6 +121,8 @@ def main() -> None:
             "max_samples": args.max_samples,
             "sequence_length": args.sequence_length,
             "stride": args.stride,
+            "block_size": args.block_size if method_name != "fp16" else "",
+            "mxfp4_group_size": args.mxfp4_group_size if method_name != "fp16" and STAGE_B_METHODS[STAGE_B_MODEL_METHODS[method_name].method].quantizer == "mxfp4_e2m1" else "",
         }
         records.append(record)
         with (output_dir / "ppl_runs.jsonl").open("a", encoding="utf-8") as f:

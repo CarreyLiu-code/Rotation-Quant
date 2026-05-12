@@ -1,0 +1,6 @@
+method,bits,ppl,block_size,mxfp4_group_size,dataset,dataset_config,split,max_samples,sequence_length,stride,quantized_layers
+fp16,16,8.048572581977634,,,wikitext,wikitext-2-raw-v1,test,512,2048,2048,0
+mxfp4,4,8.635010259032164,32,32,wikitext,wikitext-2-raw-v1,test,512,2048,2048,154
+hadamard_mxfp4,4,8.917492040790325,32,32,wikitext,wikitext-2-raw-v1,test,512,2048,2048,154
+hadamard_lm,4,8.598065017228242,32,,wikitext,wikitext-2-raw-v1,test,512,2048,2048,154
+hadamard_lm,3,12.353269736158751,32,,wikitext,wikitext-2-raw-v1,test,512,2048,2048,154

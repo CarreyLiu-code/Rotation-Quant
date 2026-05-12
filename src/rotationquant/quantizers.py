@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 import torch
+import torch.nn.functional as F
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,160 @@ def symmetric_absmax_quantize(x: torch.Tensor, bits: int, eps: float = 1e-12) ->
         bits=bits,
         quantizer_type="uniform integer-like",
         metadata={"scale": float(scale.cpu()), "qmax": qmax},
+    )
+
+
+def _check_block_size(block_size: int) -> None:
+    if block_size <= 0:
+        raise ValueError(f"block_size must be positive, got {block_size}.")
+
+
+def _symmetric_absmax_quantize_blocks(blocks: torch.Tensor, bits: int, eps: float) -> tuple[torch.Tensor, int]:
+    if bits < 2:
+        raise ValueError("block absmax quantization expects bits >= 2.")
+    qmax = (1 << (bits - 1)) - 1
+    scale = blocks.detach().abs().amax(dim=-1, keepdim=True).float().clamp_min(eps) / qmax
+    q = torch.round(blocks.float() / scale).clamp(-qmax, qmax)
+    return (q * scale).to(dtype=blocks.dtype), qmax
+
+
+def symmetric_absmax_quantize_flat_blocks(
+    x: torch.Tensor,
+    bits: int,
+    block_size: int = 128,
+    eps: float = 1e-12,
+) -> QuantizedTensor:
+    """Symmetric uniform fake quantization with one absmax scale per flat block."""
+    _check_block_size(block_size)
+    flat = x.reshape(-1)
+    pad = (-flat.numel()) % block_size
+    if pad:
+        flat = F.pad(flat, (0, pad))
+    blocks = flat.reshape(-1, block_size)
+    quantized, qmax = _symmetric_absmax_quantize_blocks(blocks, bits, eps)
+    restored = quantized.reshape(-1)
+    if pad:
+        restored = restored[:-pad]
+    return QuantizedTensor(
+        values=restored.reshape_as(x),
+        bits=bits,
+        quantizer_type="uniform integer-like",
+        metadata={
+            "qmax": qmax,
+            "block_size": block_size,
+            "scale_granularity": "flat_block_absmax",
+            "scale_count": int(blocks.shape[0]),
+        },
+    )
+
+
+def symmetric_absmax_quantize_last_dim_blocks(
+    x: torch.Tensor,
+    bits: int,
+    block_size: int = 128,
+    eps: float = 1e-12,
+) -> QuantizedTensor:
+    """Symmetric uniform fake quantization with one absmax scale per last-dim block."""
+    _check_block_size(block_size)
+    pad = (-x.shape[-1]) % block_size
+    values = x
+    if pad:
+        values = F.pad(values, (0, pad))
+    leading_shape = values.shape[:-1]
+    blocks = values.reshape(*leading_shape, values.shape[-1] // block_size, block_size)
+    quantized, qmax = _symmetric_absmax_quantize_blocks(blocks, bits, eps)
+    restored = quantized.reshape(*leading_shape, values.shape[-1])
+    if pad:
+        restored = restored[..., :-pad]
+    return QuantizedTensor(
+        values=restored.to(dtype=x.dtype),
+        bits=bits,
+        quantizer_type="uniform integer-like",
+        metadata={
+            "qmax": qmax,
+            "block_size": block_size,
+            "scale_granularity": "last_dim_block_absmax",
+            "scale_count": int(blocks.numel() // block_size),
+        },
+    )
+
+
+def _mxfp4_quantize_blocks(blocks: torch.Tensor, eps: float) -> torch.Tensor:
+    codebook = torch.tensor(
+        [-6.0, -4.0, -3.0, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0],
+        device=blocks.device,
+        dtype=torch.float32,
+    )
+    boundaries = (codebook[:-1] + codebook[1:]) / 2
+    amax = blocks.detach().abs().amax(dim=-1, keepdim=True).float()
+    raw_scale = (amax / 6.0).clamp_min(eps)
+    scale = torch.pow(torch.tensor(2.0, device=blocks.device), torch.ceil(torch.log2(raw_scale)))
+    scale = torch.where(amax > 0, scale, torch.ones_like(scale))
+    normalized = blocks.float() / scale
+    indices = torch.zeros_like(normalized, dtype=torch.long)
+    for boundary in boundaries:
+        indices = indices + (normalized > boundary).to(torch.long)
+    return (codebook[indices] * scale).to(dtype=blocks.dtype)
+
+
+def mxfp4_e2m1_quantize_flat_blocks(
+    x: torch.Tensor,
+    group_size: int = 32,
+    eps: float = 1e-12,
+) -> QuantizedTensor:
+    """MXFP4 E2M1 fake quantization with power-of-two scale per flat group."""
+    _check_block_size(group_size)
+    flat = x.reshape(-1)
+    pad = (-flat.numel()) % group_size
+    if pad:
+        flat = F.pad(flat, (0, pad))
+    blocks = flat.reshape(-1, group_size)
+    quantized = _mxfp4_quantize_blocks(blocks, eps)
+    restored = quantized.reshape(-1)
+    if pad:
+        restored = restored[:-pad]
+    return QuantizedTensor(
+        values=restored.reshape_as(x),
+        bits=4,
+        quantizer_type="mxfp4_e2m1_fake_quant",
+        metadata={
+            "mxfp4_group_size": group_size,
+            "scale_granularity": "group_power2",
+            "scale_count": int(blocks.shape[0]),
+            "element_format": "E2M1",
+            "scale_format": "E8M0_like_power2",
+        },
+    )
+
+
+def mxfp4_e2m1_quantize_last_dim_blocks(
+    x: torch.Tensor,
+    group_size: int = 32,
+    eps: float = 1e-12,
+) -> QuantizedTensor:
+    """MXFP4 E2M1 fake quantization with power-of-two scale per last-dim group."""
+    _check_block_size(group_size)
+    pad = (-x.shape[-1]) % group_size
+    values = x
+    if pad:
+        values = F.pad(values, (0, pad))
+    leading_shape = values.shape[:-1]
+    blocks = values.reshape(*leading_shape, values.shape[-1] // group_size, group_size)
+    quantized = _mxfp4_quantize_blocks(blocks, eps)
+    restored = quantized.reshape(*leading_shape, values.shape[-1])
+    if pad:
+        restored = restored[..., :-pad]
+    return QuantizedTensor(
+        values=restored.to(dtype=x.dtype),
+        bits=4,
+        quantizer_type="mxfp4_e2m1_fake_quant",
+        metadata={
+            "mxfp4_group_size": group_size,
+            "scale_granularity": "group_power2",
+            "scale_count": int(blocks.numel() // group_size),
+            "element_format": "E2M1",
+            "scale_format": "E8M0_like_power2",
+        },
     )
 
 

@@ -11,7 +11,7 @@ import torch
 from rotationquant.modeling import TINYLLAMA_BASE_DIR, load_causal_lm
 from rotationquant.ppl import evaluate_causal_lm_ppl, load_text_dataset, tokenize_texts
 from rotationquant.run_metadata import build_run_metadata, create_run_output_dir, write_run_metadata
-from rotationquant.stage_a import STAGE_A_METHODS
+from rotationquant.stage_a import STAGE_A_METHODS, stage_a_method_supports_bits
 from rotationquant.stage_a_model import apply_stage_a_weight_quant_
 
 
@@ -22,6 +22,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--methods", nargs="+", default=["fp16", "direct_absmax", "hadamard_absmax", "hadamard_lm"])
     parser.add_argument("--bits", nargs="+", type=int, default=[4, 3, 2])
     parser.add_argument("--block-size", type=int, default=128)
+    parser.add_argument("--mxfp4-group-size", type=int, default=32)
+    parser.add_argument("--rotation-seed", type=int, default=0)
     parser.add_argument("--dtype", choices=["float16", "bfloat16", "float32"], default="float16")
     parser.add_argument("--device-map", default=None)
     parser.add_argument("--device", default=None)
@@ -46,7 +48,7 @@ def main() -> None:
     for method in args.methods:
         if method != "fp16" and method not in STAGE_A_METHODS:
             raise ValueError(f"Unknown Stage A method: {method}")
-        bit_list = [16] if method == "fp16" else args.bits
+        bit_list = [16] if method == "fp16" else [bits for bits in args.bits if stage_a_method_supports_bits(method, bits)]
         for bits in bit_list:
             # Reload per run so each quantized model starts from the same FP checkpoint.
             model, tokenizer = load_causal_lm(args.model_dir, dtype=args.dtype, device_map=args.device_map)
@@ -59,6 +61,8 @@ def main() -> None:
                     bits=bits,
                     method_name=method,
                     block_size=args.block_size,
+                    mxfp4_group_size=args.mxfp4_group_size,
+                    rotation_seed=args.rotation_seed,
                 )
             input_ids = tokenize_texts(tokenizer, list(texts), max_samples=args.max_samples)
             ppl = evaluate_causal_lm_ppl(
@@ -72,6 +76,8 @@ def main() -> None:
                 "method": method,
                 "bits": bits,
                 "ppl": ppl,
+                "block_size": args.block_size if method != "fp16" else "",
+                "mxfp4_group_size": args.mxfp4_group_size if method != "fp16" and STAGE_A_METHODS[method].quantizer == "mxfp4_e2m1" else "",
                 "dataset": args.dataset,
                 "dataset_config": args.dataset_config,
                 "split": args.split,

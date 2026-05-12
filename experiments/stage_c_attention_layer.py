@@ -45,6 +45,8 @@ def parse_args() -> argparse.Namespace:
         ],
     )
     parser.add_argument("--block-size", type=int, default=128)
+    parser.add_argument("--mxfp4-group-size", type=int, default=32)
+    parser.add_argument("--rotation-seed", type=int, default=0)
     parser.add_argument("--dtype", choices=["float16", "bfloat16", "float32"], default="float16")
     parser.add_argument("--device-map", default=None)
     parser.add_argument("--device", default=None)
@@ -95,7 +97,11 @@ def summarize(records: list[dict[str, object]], output_dir: Path) -> None:
         "layer_output_relative_mse",
         "layer_output_cosine",
     ]
-    by_method = df.groupby(["method_key", "linear_bits", "kv_bits", "value_path"], dropna=False)[metric_columns].mean().reset_index()
+    group_columns = ["method_key", "linear_bits", "kv_bits", "value_path"]
+    for optional_column in ["block_size", "kv_block_size", "o_proj_domain_block_size"]:
+        if optional_column in df.columns:
+            group_columns.append(optional_column)
+    by_method = df.groupby(group_columns, dropna=False)[metric_columns].mean().reset_index()
     by_layer = df.groupby(["layer_index", "method_key"], dropna=False)[metric_columns].mean().reset_index()
     by_method.to_csv(output_dir / "summary_by_method.csv", index=False)
     by_layer.to_csv(output_dir / "summary_by_layer.csv", index=False)
@@ -109,6 +115,8 @@ def summarize(records: list[dict[str, object]], output_dir: Path) -> None:
                 "linear_bits",
                 "kv_bits",
                 "value_path",
+                "block_size",
+                "kv_block_size",
                 "score_relative_mse",
                 "softmax_kl",
                 "pre_o_output_cosine",
@@ -171,7 +179,15 @@ def method_metadata(method_key: str) -> dict[str, object]:
         "kv_bits": kv_spec.label,
         "k_bits": kv_spec.k_bits,
         "v_bits": kv_spec.v_bits,
+        "kv_rotation_backend": kv_spec.rotation_backend,
+        "kv_block_size": kv_spec.kv_block_size,
+        "linear_rotation_backend": (
+            STAGE_B_METHODS[spec.linear_spec.method].rotation_backend or "none"
+            if spec.linear_spec is not None
+            else "none"
+        ),
         "value_path": spec.value_path,
+        "o_proj_domain_block_size": kv_spec.kv_block_size if spec.value_path == "o_proj_absorb" else "",
         "compute_interpretation": spec.compute_interpretation,
     }
 
@@ -223,6 +239,8 @@ def main() -> None:
                     item,
                     method_name=method_key,
                     block_size=args.block_size,
+                    mxfp4_group_size=args.mxfp4_group_size,
+                    rotation_seed=args.rotation_seed,
                 )
                 candidate = AttentionComputation(
                     raw_inner_product=details["raw_inner_product"].float(),
@@ -239,7 +257,16 @@ def main() -> None:
                     **pre_o_metrics(item.attn_output_heads.float(), details),
                     **attention_layer_metrics_from_details(item, output, details),
                 }
-            records.append({"layer_index": item.layer_index, "layer": item.layer, "method_key": method_key, **metrics})
+            records.append(
+                {
+                    "layer_index": item.layer_index,
+                    "layer": item.layer,
+                    "method_key": method_key,
+                    "block_size": args.block_size if method_key != "fp16" else "",
+                    "mxfp4_group_size": args.mxfp4_group_size if method_key != "fp16" else "",
+                    **metrics,
+                }
+            )
             progress.update(1)
     progress.close()
 

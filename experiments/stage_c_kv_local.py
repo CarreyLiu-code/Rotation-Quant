@@ -13,7 +13,7 @@ from rotationquant.attention_capture import TinyLlamaAttentionCapture
 from rotationquant.modeling import TINYLLAMA_BASE_DIR, load_causal_lm
 from rotationquant.ppl import load_text_dataset, tokenize_texts
 from rotationquant.run_metadata import build_run_metadata, create_run_output_dir, write_run_metadata
-from rotationquant.stage_c import STAGE_C_KV_SPECS, evaluate_kv_quantization
+from rotationquant.stage_c import STAGE_C_KV_SPECS, evaluate_kv_quantization, make_head_rotation_matrix, make_head_signs
 
 
 def parse_args() -> argparse.Namespace:
@@ -45,6 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-samples", type=int, default=8)
     parser.add_argument("--sequence-length", type=int, default=128)
     parser.add_argument("--layer-limit", type=int, default=None)
+    parser.add_argument("--rotation-seed", type=int, default=0)
     return parser.parse_args()
 
 
@@ -84,7 +85,10 @@ def summarize(records: list[dict[str, object]], output_dir: Path) -> None:
         "value_relative_mse",
         "output_cosine",
     ]
-    by_method = df.groupby(["method_key", "method", "bits"], dropna=False)[metric_columns].mean().reset_index()
+    group_columns = ["method_key", "method", "bits"]
+    if "kv_block_size" in df.columns:
+        group_columns.append("kv_block_size")
+    by_method = df.groupby(group_columns, dropna=False)[metric_columns].mean().reset_index()
     by_layer = df.groupby(["layer_index", "method_key", "bits"], dropna=False)[metric_columns].mean().reset_index()
     by_method.to_csv(output_dir / "summary_by_method.csv", index=False)
     by_layer.to_csv(output_dir / "summary_by_layer.csv", index=False)
@@ -93,7 +97,7 @@ def summarize(records: list[dict[str, object]], output_dir: Path) -> None:
         "",
         to_markdown_table(
             by_method.round(6).to_dict(orient="records"),
-            ["method_key", "method", "bits", "score_relative_mse", "softmax_kl", "topk_overlap", "output_cosine"],
+            [*group_columns, "score_relative_mse", "softmax_kl", "topk_overlap", "output_cosine"],
         ),
         "",
     ]
@@ -124,6 +128,22 @@ def main() -> None:
     for item in capture.records:
         for method_key in args.methods:
             spec = STAGE_C_KV_SPECS[method_key]
+            signs = None
+            matrix = None
+            if spec.rotation_backend == "randomized_hadamard":
+                signs = make_head_signs(
+                    item.q_rope.shape[-1],
+                    seed=args.rotation_seed + item.layer_index,
+                    device=item.q_rope.device,
+                    dtype=item.q_rope.dtype,
+                )
+            elif spec.rotation_backend == "random_orthogonal":
+                matrix = make_head_rotation_matrix(
+                    item.q_rope.shape[-1],
+                    seed=args.rotation_seed + item.layer_index,
+                    device=item.q_rope.device,
+                    dtype=item.q_rope.dtype,
+                )
             metrics = evaluate_kv_quantization(
                 item.q_rope.float(),
                 item.k_rope.float(),
@@ -132,6 +152,8 @@ def main() -> None:
                 item.scaling,
                 item.num_key_value_groups,
                 spec,
+                signs=signs,
+                matrix=matrix,
             )
             records.append(
                 {

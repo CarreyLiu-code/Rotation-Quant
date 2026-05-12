@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 from rotationquant.metrics import cosine_similarity, relative_mse, tensor_metrics
 from rotationquant.quantizers import gaussian_lloyd_max_codebook
-from rotationquant.rotations import fwht
+from rotationquant.rotations import block_rotation_last_dim, fwht, random_orthogonal_matrix
 from rotationquant.stage_b import STAGE_B_LINEAR_SPECS, WABitSpec
 
 
@@ -21,6 +21,8 @@ class KVQuantSpec:
     rotation: str
     quantizer: str
     compute_interpretation: str
+    rotation_backend: str = "hadamard"
+    kv_block_size: int = 64
 
     @property
     def label(self) -> str:
@@ -73,6 +75,7 @@ STAGE_C_KV_SPECS: dict[str, KVQuantSpec] = {
         rotation="none",
         quantizer="none",
         compute_interpretation="baseline",
+        rotation_backend="none",
     ),
     "absmax_k4v4": KVQuantSpec(
         name="absmax_k4v4",
@@ -82,6 +85,7 @@ STAGE_C_KV_SPECS: dict[str, KVQuantSpec] = {
         rotation="none",
         quantizer="absmax_per_token_head",
         compute_interpretation="uniform fake quant KV baseline",
+        rotation_backend="none",
     ),
     "absmax_k3v4": KVQuantSpec(
         name="absmax_k3v4",
@@ -91,6 +95,7 @@ STAGE_C_KV_SPECS: dict[str, KVQuantSpec] = {
         rotation="none",
         quantizer="absmax_per_token_head",
         compute_interpretation="uniform fake quant with lower key bits",
+        rotation_backend="none",
     ),
     "absmax_k4v3": KVQuantSpec(
         name="absmax_k4v3",
@@ -100,6 +105,7 @@ STAGE_C_KV_SPECS: dict[str, KVQuantSpec] = {
         rotation="none",
         quantizer="absmax_per_token_head",
         compute_interpretation="uniform fake quant with lower value bits",
+        rotation_backend="none",
     ),
     "hadamard_lm_k4v4": KVQuantSpec(
         name="hadamard_lm_k4v4",
@@ -109,6 +115,18 @@ STAGE_C_KV_SPECS: dict[str, KVQuantSpec] = {
         rotation="headwise_hadamard",
         quantizer="gaussian_lloyd_max",
         compute_interpretation="rotated non-uniform KV fake quant",
+        rotation_backend="hadamard",
+    ),
+    "hadamard_lm_k4v4_h32": KVQuantSpec(
+        name="hadamard_lm_k4v4_h32",
+        method="hadamard_lm",
+        k_bits=4,
+        v_bits=4,
+        rotation="headwise_hadamard_h32",
+        quantizer="gaussian_lloyd_max",
+        compute_interpretation="head-internal H32 non-uniform KV fake quant",
+        rotation_backend="hadamard",
+        kv_block_size=32,
     ),
     "hadamard_lm_k3v4": KVQuantSpec(
         name="hadamard_lm_k3v4",
@@ -118,6 +136,18 @@ STAGE_C_KV_SPECS: dict[str, KVQuantSpec] = {
         rotation="headwise_hadamard",
         quantizer="gaussian_lloyd_max",
         compute_interpretation="rotated non-uniform key bit reduction",
+        rotation_backend="hadamard",
+    ),
+    "hadamard_lm_k3v4_h32": KVQuantSpec(
+        name="hadamard_lm_k3v4_h32",
+        method="hadamard_lm",
+        k_bits=3,
+        v_bits=4,
+        rotation="headwise_hadamard_h32",
+        quantizer="gaussian_lloyd_max",
+        compute_interpretation="head-internal H32 key bit reduction",
+        rotation_backend="hadamard",
+        kv_block_size=32,
     ),
     "hadamard_lm_k4v3": KVQuantSpec(
         name="hadamard_lm_k4v3",
@@ -127,6 +157,7 @@ STAGE_C_KV_SPECS: dict[str, KVQuantSpec] = {
         rotation="headwise_hadamard",
         quantizer="gaussian_lloyd_max",
         compute_interpretation="rotated non-uniform value bit reduction",
+        rotation_backend="hadamard",
     ),
     "hadamard_lm_k3v3": KVQuantSpec(
         name="hadamard_lm_k3v3",
@@ -136,6 +167,7 @@ STAGE_C_KV_SPECS: dict[str, KVQuantSpec] = {
         rotation="headwise_hadamard",
         quantizer="gaussian_lloyd_max",
         compute_interpretation="aggressive rotated non-uniform KV fake quant",
+        rotation_backend="hadamard",
     ),
     "hadamard_lm_k2v4": KVQuantSpec(
         name="hadamard_lm_k2v4",
@@ -145,6 +177,67 @@ STAGE_C_KV_SPECS: dict[str, KVQuantSpec] = {
         rotation="headwise_hadamard",
         quantizer="gaussian_lloyd_max",
         compute_interpretation="key 2-bit failure boundary",
+        rotation_backend="hadamard",
+    ),
+    "randhadamard_lm_k4v4": KVQuantSpec(
+        name="randhadamard_lm_k4v4",
+        method="hadamard_lm",
+        k_bits=4,
+        v_bits=4,
+        rotation="headwise_randomized_hadamard",
+        quantizer="gaussian_lloyd_max",
+        compute_interpretation="randomized Hadamard non-uniform KV fake quant",
+        rotation_backend="randomized_hadamard",
+    ),
+    "randhadamard_lm_k3v4": KVQuantSpec(
+        name="randhadamard_lm_k3v4",
+        method="hadamard_lm",
+        k_bits=3,
+        v_bits=4,
+        rotation="headwise_randomized_hadamard",
+        quantizer="gaussian_lloyd_max",
+        compute_interpretation="randomized Hadamard key bit reduction",
+        rotation_backend="randomized_hadamard",
+    ),
+    "randhadamard_lm_k4v3": KVQuantSpec(
+        name="randhadamard_lm_k4v3",
+        method="hadamard_lm",
+        k_bits=4,
+        v_bits=3,
+        rotation="headwise_randomized_hadamard",
+        quantizer="gaussian_lloyd_max",
+        compute_interpretation="randomized Hadamard value bit reduction",
+        rotation_backend="randomized_hadamard",
+    ),
+    "randortho_lm_k4v4": KVQuantSpec(
+        name="randortho_lm_k4v4",
+        method="hadamard_lm",
+        k_bits=4,
+        v_bits=4,
+        rotation="headwise_random_orthogonal",
+        quantizer="gaussian_lloyd_max",
+        compute_interpretation="dense random orthogonal non-uniform KV fake quant",
+        rotation_backend="random_orthogonal",
+    ),
+    "randortho_lm_k3v4": KVQuantSpec(
+        name="randortho_lm_k3v4",
+        method="hadamard_lm",
+        k_bits=3,
+        v_bits=4,
+        rotation="headwise_random_orthogonal",
+        quantizer="gaussian_lloyd_max",
+        compute_interpretation="dense random orthogonal key bit reduction",
+        rotation_backend="random_orthogonal",
+    ),
+    "randortho_lm_k4v3": KVQuantSpec(
+        name="randortho_lm_k4v3",
+        method="hadamard_lm",
+        k_bits=4,
+        v_bits=3,
+        rotation="headwise_random_orthogonal",
+        quantizer="gaussian_lloyd_max",
+        compute_interpretation="dense random orthogonal value bit reduction",
+        rotation_backend="random_orthogonal",
     ),
 }
 
@@ -213,6 +306,15 @@ STAGE_C_STRUCTURED_ATTENTION_SPECS: dict[str, StageCStructuredAttentionSpec] = {
         quantize_o=False,
         compute_interpretation="KV-only HLM K4V4 with value rotation absorbed into o_proj",
     ),
+    "attn_kv_hlm_k4v4_h32": StageCStructuredAttentionSpec(
+        name="attn_kv_hlm_k4v4_h32",
+        linear_spec=None,
+        kv_spec_key="hadamard_lm_k4v4_h32",
+        value_path="o_proj_absorb",
+        quantize_qkv=False,
+        quantize_o=False,
+        compute_interpretation="KV-only HLM K4V4 with head-internal H32 value rotation absorbed into o_proj",
+    ),
     "attn_kv_hlm_k3v4": StageCStructuredAttentionSpec(
         name="attn_kv_hlm_k3v4",
         linear_spec=None,
@@ -240,6 +342,24 @@ STAGE_C_STRUCTURED_ATTENTION_SPECS: dict[str, StageCStructuredAttentionSpec] = {
         quantize_o=True,
         compute_interpretation="rotated LM W4A4 plus HLM K4V4 with value rotation absorbed into o_proj",
     ),
+    "attn_mxfp4_w4a4_hlm_k4v4": StageCStructuredAttentionSpec(
+        name="attn_mxfp4_w4a4_hlm_k4v4",
+        linear_spec=STAGE_B_LINEAR_SPECS["mxfp4_w4a4"],
+        kv_spec_key="hadamard_lm_k4v4",
+        value_path="o_proj_absorb",
+        quantize_qkv=True,
+        quantize_o=True,
+        compute_interpretation="MXFP4 W4A4 linear fake quant plus HLM K4V4",
+    ),
+    "attn_rot_mxfp4_w4a4_hlm_k4v4": StageCStructuredAttentionSpec(
+        name="attn_rot_mxfp4_w4a4_hlm_k4v4",
+        linear_spec=STAGE_B_LINEAR_SPECS["rot_mxfp4_w4a4"],
+        kv_spec_key="hadamard_lm_k4v4",
+        value_path="o_proj_absorb",
+        quantize_qkv=True,
+        quantize_o=True,
+        compute_interpretation="Hadamard-rotated MXFP4 W4A4 linear fake quant plus HLM K4V4",
+    ),
     "attn_rot_lm_w3a4_hlm_k3v4": StageCStructuredAttentionSpec(
         name="attn_rot_lm_w3a4_hlm_k3v4",
         linear_spec=STAGE_B_LINEAR_SPECS["rot_lm_w3a4"],
@@ -257,6 +377,42 @@ STAGE_C_STRUCTURED_ATTENTION_SPECS: dict[str, StageCStructuredAttentionSpec] = {
         quantize_qkv=True,
         quantize_o=True,
         compute_interpretation="rotated LM W4A3 plus HLM K4V3 with value rotation absorbed into o_proj",
+    ),
+    "attn_randhadamard_lm_w4a4_hlm_k4v4": StageCStructuredAttentionSpec(
+        name="attn_randhadamard_lm_w4a4_hlm_k4v4",
+        linear_spec=STAGE_B_LINEAR_SPECS["randhadamard_lm_w4a4"],
+        kv_spec_key="randhadamard_lm_k4v4",
+        value_path="o_proj_absorb",
+        quantize_qkv=True,
+        quantize_o=True,
+        compute_interpretation="randomized Hadamard LM W4A4 plus randomized HLM K4V4",
+    ),
+    "attn_randhadamard_lm_w3a4_hlm_k3v4": StageCStructuredAttentionSpec(
+        name="attn_randhadamard_lm_w3a4_hlm_k3v4",
+        linear_spec=STAGE_B_LINEAR_SPECS["randhadamard_lm_w3a4"],
+        kv_spec_key="randhadamard_lm_k3v4",
+        value_path="o_proj_absorb",
+        quantize_qkv=True,
+        quantize_o=True,
+        compute_interpretation="randomized Hadamard LM W3A4 plus randomized HLM K3V4",
+    ),
+    "attn_randortho_lm_w4a4_hlm_k4v4": StageCStructuredAttentionSpec(
+        name="attn_randortho_lm_w4a4_hlm_k4v4",
+        linear_spec=STAGE_B_LINEAR_SPECS["randortho_lm_w4a4"],
+        kv_spec_key="randortho_lm_k4v4",
+        value_path="o_proj_absorb",
+        quantize_qkv=True,
+        quantize_o=True,
+        compute_interpretation="dense random orthogonal LM W4A4 plus random-orthogonal K4V4",
+    ),
+    "attn_randortho_lm_w3a4_hlm_k3v4": StageCStructuredAttentionSpec(
+        name="attn_randortho_lm_w3a4_hlm_k3v4",
+        linear_spec=STAGE_B_LINEAR_SPECS["randortho_lm_w3a4"],
+        kv_spec_key="randortho_lm_k3v4",
+        value_path="o_proj_absorb",
+        quantize_qkv=True,
+        quantize_o=True,
+        compute_interpretation="dense random orthogonal LM W3A4 plus random-orthogonal K3V4",
     ),
 }
 
@@ -291,6 +447,62 @@ def inverse_headwise_hadamard(x: torch.Tensor, signs: torch.Tensor | None = None
     return values
 
 
+def make_head_rotation_matrix(
+    head_dim: int,
+    *,
+    seed: int,
+    device: torch.device | str,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    """Create a deterministic dense orthogonal matrix for head-wise ablation."""
+    return random_orthogonal_matrix(head_dim, seed=seed, device=device, dtype=dtype)
+
+
+def headwise_rotation(
+    x: torch.Tensor,
+    *,
+    rotation_backend: str = "hadamard",
+    signs: torch.Tensor | None = None,
+    matrix: torch.Tensor | None = None,
+    block_size: int | None = None,
+    inverse: bool = False,
+) -> torch.Tensor:
+    """Apply the selected head-wise orthonormal rotation along head_dim."""
+    head_dim = x.shape[-1]
+    effective_block_size = block_size or head_dim
+    if rotation_backend == "hadamard":
+        if effective_block_size != head_dim:
+            return block_rotation_last_dim(
+                x,
+                block_size=effective_block_size,
+                rotation_backend="hadamard",
+                inverse=inverse,
+            )
+        return headwise_hadamard(x, signs=None)
+    if rotation_backend == "randomized_hadamard":
+        if effective_block_size != head_dim:
+            return block_rotation_last_dim(
+                x,
+                block_size=effective_block_size,
+                rotation_backend="randomized_hadamard",
+                inverse=inverse,
+            )
+        return inverse_headwise_hadamard(x, signs=signs) if inverse else headwise_hadamard(x, signs=signs)
+    if rotation_backend == "random_orthogonal":
+        if effective_block_size != head_dim:
+            raise ValueError("random_orthogonal KV rotation only supports full-head blocks.")
+        if matrix is None:
+            matrix = make_head_rotation_matrix(
+                head_dim,
+                seed=0,
+                device=x.device,
+                dtype=x.dtype,
+            )
+        matrix = matrix.to(device=x.device, dtype=x.dtype)
+        return x @ (matrix.t() if inverse else matrix)
+    raise ValueError(f"Unsupported head-wise rotation backend: {rotation_backend}")
+
+
 def per_head_rms(x: torch.Tensor, eps: float = 1e-12) -> tuple[torch.Tensor, torch.Tensor]:
     scale = x.float().square().mean(dim=-1, keepdim=True).sqrt().clamp_min(eps)
     return (x.float() / scale).to(dtype=x.dtype), scale.to(dtype=x.dtype)
@@ -318,12 +530,28 @@ def hadamard_lm_quantize_per_head(
     x: torch.Tensor,
     bits: int,
     signs: torch.Tensor | None = None,
+    rotation_backend: str = "hadamard",
+    matrix: torch.Tensor | None = None,
+    kv_block_size: int | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Return reconstructed x, quantized rotated normalized x, and RMS scale."""
     normalized, scale = per_head_rms(x)
-    rotated = headwise_hadamard(normalized, signs=signs)
+    rotated = headwise_rotation(
+        normalized,
+        rotation_backend=rotation_backend,
+        signs=signs,
+        matrix=matrix,
+        block_size=kv_block_size,
+    )
     quantized_rotated = _lloyd_max_centroid_quantize(rotated, bits)
-    restored = inverse_headwise_hadamard(quantized_rotated, signs=signs) * scale
+    restored = headwise_rotation(
+        quantized_rotated,
+        rotation_backend=rotation_backend,
+        signs=signs,
+        matrix=matrix,
+        block_size=kv_block_size,
+        inverse=True,
+    ) * scale
     return restored.to(dtype=x.dtype), quantized_rotated.to(dtype=x.dtype), scale.to(dtype=x.dtype)
 
 
@@ -480,14 +708,22 @@ def quantize_value_for_kv(
     value: torch.Tensor,
     spec: KVQuantSpec,
     signs: torch.Tensor | None = None,
+    matrix: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, dict[str, object]]:
     if spec.method == "fp16":
         return value, {"value_scale_granularity": "none"}
     if spec.method == "absmax":
         return absmax_quantize_per_head(value, spec.v_bits), {"value_scale_granularity": "per_token_head_absmax"}
     if spec.method == "hadamard_lm":
-        value_hat, _value_rotated, _value_scale = hadamard_lm_quantize_per_head(value, spec.v_bits, signs=signs)
-        return value_hat, {"value_scale_granularity": "per_token_head_rms"}
+        value_hat, _value_rotated, _value_scale = hadamard_lm_quantize_per_head(
+            value,
+            spec.v_bits,
+            signs=signs,
+            rotation_backend=spec.rotation_backend,
+            matrix=matrix,
+            kv_block_size=spec.kv_block_size,
+        )
+        return value_hat, {"value_scale_granularity": "per_token_head_rms", "kv_block_size": spec.kv_block_size}
     raise ValueError(f"Unsupported KV method: {spec.method}")
 
 
@@ -500,20 +736,34 @@ def quantized_kv_attention(
     num_key_value_groups: int,
     spec: KVQuantSpec,
     signs: torch.Tensor | None = None,
+    matrix: torch.Tensor | None = None,
 ) -> AttentionComputation:
     if spec.method == "fp16":
         return reference_attention(query, key, value, attention_mask, scaling, num_key_value_groups)
 
     if spec.method == "absmax":
         key_hat = absmax_quantize_per_head(key, spec.k_bits)
-        value_hat, value_meta = quantize_value_for_kv(value, spec, signs=signs)
+        value_hat, value_meta = quantize_value_for_kv(value, spec, signs=signs, matrix=matrix)
         raw_ip = raw_attention_inner_product(query, key_hat, num_key_value_groups)
     elif spec.method == "hadamard_lm":
-        key_hat, key_rotated_hat, key_scale = hadamard_lm_quantize_per_head(key, spec.k_bits, signs=signs)
-        query_rotated = headwise_hadamard(query, signs=signs)
+        key_hat, key_rotated_hat, key_scale = hadamard_lm_quantize_per_head(
+            key,
+            spec.k_bits,
+            signs=signs,
+            rotation_backend=spec.rotation_backend,
+            matrix=matrix,
+            kv_block_size=spec.kv_block_size,
+        )
+        query_rotated = headwise_rotation(
+            query,
+            rotation_backend=spec.rotation_backend,
+            signs=signs,
+            matrix=matrix,
+            block_size=spec.kv_block_size,
+        )
         key_rotated_actual = key_rotated_hat * key_scale
         raw_ip = raw_attention_inner_product(query_rotated, key_rotated_actual, num_key_value_groups)
-        value_hat, value_meta = quantize_value_for_kv(value, spec, signs=signs)
+        value_hat, value_meta = quantize_value_for_kv(value, spec, signs=signs, matrix=matrix)
     else:
         raise ValueError(f"Unsupported KV method: {spec.method}")
 
@@ -526,8 +776,12 @@ def quantized_kv_attention(
         "k_bits": spec.k_bits,
         "v_bits": spec.v_bits,
         "kv_rotation": spec.rotation,
+        "rotation_backend": spec.rotation_backend,
+        "kv_block_size": spec.kv_block_size,
         "kv_quantizer": spec.quantizer,
-        "key_scale_granularity": "per_token_head_rms" if spec.method == "hadamard_lm" else "per_token_head_absmax",
+        "key_scale_granularity": (
+            f"per_token_head_h{spec.kv_block_size}_rms" if spec.method == "hadamard_lm" else "per_token_head_absmax"
+        ),
         "compute_interpretation": spec.compute_interpretation,
         **value_meta,
     }
@@ -551,6 +805,7 @@ def quantized_kv_attention_o_proj_absorb(
     num_key_value_groups: int,
     spec: KVQuantSpec,
     signs: torch.Tensor | None = None,
+    matrix: torch.Tensor | None = None,
 ) -> AttentionComputation:
     """Attention where value remains in head-wise rotated domain for o_proj absorption.
 
@@ -558,21 +813,42 @@ def quantized_kv_attention_o_proj_absorb(
     are returned in the same rotated H64 domain, so the caller must use
     W_o H64_blockdiag instead of the original o_proj weight.
     """
+    rotation_backend = spec.rotation_backend if spec.rotation_backend != "none" else "hadamard"
     if spec.method == "fp16":
-        query_rotated = headwise_hadamard(query, signs=signs)
-        key_rotated = headwise_hadamard(key, signs=signs)
+        query_rotated = headwise_rotation(query, rotation_backend=rotation_backend, signs=signs, matrix=matrix, block_size=spec.kv_block_size)
+        key_rotated = headwise_rotation(key, rotation_backend=rotation_backend, signs=signs, matrix=matrix, block_size=spec.kv_block_size)
         raw_ip = raw_attention_inner_product(query_rotated, key_rotated, num_key_value_groups)
-        value_rotated = headwise_hadamard(value, signs=signs)
+        value_rotated = headwise_rotation(value, rotation_backend=rotation_backend, signs=signs, matrix=matrix, block_size=spec.kv_block_size)
         value_hat = value
         value_meta = {"value_scale_granularity": "none"}
     elif spec.method == "hadamard_lm":
-        key_hat, key_rotated_hat, key_scale = hadamard_lm_quantize_per_head(key, spec.k_bits, signs=signs)
-        query_rotated = headwise_hadamard(query, signs=signs)
+        key_hat, key_rotated_hat, key_scale = hadamard_lm_quantize_per_head(
+            key,
+            spec.k_bits,
+            signs=signs,
+            rotation_backend=spec.rotation_backend,
+            matrix=matrix,
+            kv_block_size=spec.kv_block_size,
+        )
+        query_rotated = headwise_rotation(
+            query,
+            rotation_backend=spec.rotation_backend,
+            signs=signs,
+            matrix=matrix,
+            block_size=spec.kv_block_size,
+        )
         key_rotated_actual = key_rotated_hat * key_scale
         raw_ip = raw_attention_inner_product(query_rotated, key_rotated_actual, num_key_value_groups)
-        value_hat, value_rotated_hat, value_scale = hadamard_lm_quantize_per_head(value, spec.v_bits, signs=signs)
+        value_hat, value_rotated_hat, value_scale = hadamard_lm_quantize_per_head(
+            value,
+            spec.v_bits,
+            signs=signs,
+            rotation_backend=spec.rotation_backend,
+            matrix=matrix,
+            kv_block_size=spec.kv_block_size,
+        )
         value_rotated = value_rotated_hat * value_scale
-        value_meta = {"value_scale_granularity": "per_token_head_rms"}
+        value_meta = {"value_scale_granularity": f"per_token_head_h{spec.kv_block_size}_rms"}
     else:
         raise ValueError(f"o_proj_absorb currently supports fp16 and hadamard_lm KV methods, got {spec.method}.")
 
@@ -592,8 +868,10 @@ def quantized_kv_attention_o_proj_absorb(
             "k_bits": spec.k_bits,
             "v_bits": spec.v_bits,
             "kv_rotation": spec.rotation,
+            "rotation_backend": spec.rotation_backend,
+            "kv_block_size": spec.kv_block_size,
             "kv_quantizer": spec.quantizer,
-            "key_scale_granularity": "none" if spec.method == "fp16" else "per_token_head_rms",
+            "key_scale_granularity": "none" if spec.method == "fp16" else f"per_token_head_h{spec.kv_block_size}_rms",
             "value_path": "o_proj_absorb",
             "compute_interpretation": spec.compute_interpretation,
             **value_meta,
@@ -610,6 +888,7 @@ def evaluate_kv_quantization(
     num_key_value_groups: int,
     spec: KVQuantSpec,
     signs: torch.Tensor | None = None,
+    matrix: torch.Tensor | None = None,
 ) -> dict[str, object]:
     reference = reference_attention(query, key, value, attention_mask, scaling, num_key_value_groups)
     candidate = quantized_kv_attention(
@@ -621,6 +900,7 @@ def evaluate_kv_quantization(
         num_key_value_groups,
         spec,
         signs=signs,
+        matrix=matrix,
     )
     return {**candidate.metadata, **attention_quality_metrics(reference, candidate, attention_mask)}
 

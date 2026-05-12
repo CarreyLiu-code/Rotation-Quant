@@ -54,6 +54,8 @@ def parse_args() -> argparse.Namespace:
         ],
     )
     parser.add_argument("--block-size", type=int, default=128)
+    parser.add_argument("--mxfp4-group-size", type=int, default=32)
+    parser.add_argument("--rotation-seed", type=int, default=0)
     parser.add_argument("--dtype", choices=["float16", "bfloat16", "float32"], default="float16")
     parser.add_argument("--device-map", default=None)
     parser.add_argument("--device", default=None)
@@ -169,7 +171,15 @@ def main() -> None:
         bias_cpu = bias.detach().cpu().float() if bias is not None else None
         for method_key in args.linear_methods:
             spec = STAGE_B_LINEAR_SPECS[method_key]
-            candidate, metadata = fake_quant_linear(x, weight, bias_cpu, spec, block_size=args.block_size)
+            candidate, metadata = fake_quant_linear(
+                x,
+                weight,
+                bias_cpu,
+                spec,
+                block_size=args.block_size,
+                mxfp4_group_size=args.mxfp4_group_size,
+                rotation_seed=args.rotation_seed,
+            )
             linear_records.append(
                 {
                     "layer": item.layer,
@@ -213,6 +223,8 @@ def main() -> None:
                     weights["down"],
                     spec,
                     block_size=args.block_size,
+                    mxfp4_group_size=args.mxfp4_group_size,
+                    rotation_seed=args.rotation_seed,
                     act_owner=None,
                 )
             method = metadata["method"]

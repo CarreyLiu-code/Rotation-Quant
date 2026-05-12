@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 from rotationquant.modeling import TINYLLAMA_BASE_DIR, iter_llama_target_linears, load_causal_lm
 from rotationquant.run_metadata import build_run_metadata, create_run_output_dir, write_run_metadata
-from rotationquant.stage_a import STAGE_A_METHODS, stage_a_tensor_record
+from rotationquant.stage_a import STAGE_A_METHODS, stage_a_method_supports_bits, stage_a_tensor_record
 
 
 def parse_args() -> argparse.Namespace:
@@ -20,6 +20,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bits", nargs="+", type=int, default=[4, 3, 2])
     parser.add_argument("--methods", nargs="+", default=["direct_absmax", "hadamard_absmax", "hadamard_lm"])
     parser.add_argument("--block-size", type=int, default=128)
+    parser.add_argument("--mxfp4-group-size", type=int, default=32)
+    parser.add_argument("--rotation-seed", type=int, default=0)
     parser.add_argument("--dtype", choices=["float16", "bfloat16", "float32"], default="float16")
     parser.add_argument("--device-map", default=None)
     parser.add_argument("--layer-limit", type=int, default=None)
@@ -59,24 +61,26 @@ def main() -> None:
         layers = layers[: args.layer_limit]
 
     records: list[dict[str, object]] = []
-    total = len(layers) * len(args.bits) * len(args.methods)
+    method_bit_pairs = [(method, bits) for method in args.methods for bits in args.bits if stage_a_method_supports_bits(method, bits)]
+    total = len(layers) * len(method_bit_pairs)
     progress = tqdm(total=total, desc="Stage A tensor sweep")
     for layer_name, layer in layers:
         # Move one layer at a time to CPU so this tensor-level sweep works on
         # machines without enough unified memory for many extra model copies.
         weight = layer.weight.detach().cpu()
-        for method in args.methods:
-            for bits in args.bits:
-                records.append(
-                    stage_a_tensor_record(
-                        layer_name=layer_name,
-                        weight=weight,
-                        bits=bits,
-                        method_name=method,
-                        block_size=args.block_size,
-                    )
+        for method, bits in method_bit_pairs:
+            records.append(
+                stage_a_tensor_record(
+                    layer_name=layer_name,
+                    weight=weight,
+                    bits=bits,
+                    method_name=method,
+                    block_size=args.block_size,
+                    mxfp4_group_size=args.mxfp4_group_size,
+                    rotation_seed=args.rotation_seed,
                 )
-                progress.update(1)
+            )
+            progress.update(1)
     progress.close()
 
     write_outputs(records, output_dir)

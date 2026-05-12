@@ -1,0 +1,14 @@
+method_key,method,bits,w_bits,a_bits,rotation,rotation_backend,block_size,mxfp4_group_size,compute_interpretation,quantized_ffn_modules,ppl,dataset,dataset_config,split,max_samples,sequence_length,stride
+fp16,fp16,FP16,16,16,none,none,,,baseline,0,8.048572581977634,wikitext,wikitext-2-raw-v1,test,512,2048,2048
+ffn_direct_absmax_w4a4,direct_absmax,W4A4,4,4,none,none,128,,block-wise uniform fake quant; future INT mapping is plausible,22,9.424874458360312,wikitext,wikitext-2-raw-v1,test,512,2048,2048
+ffn_mxfp4_w4a4,mxfp4,W4A4,4,4,none,none,128,32,MXFP4 E2M1 fake quant with 32-value group scales,22,8.941881887177905,wikitext,wikitext-2-raw-v1,test,512,2048,2048
+ffn_rot_absmax_w4a4,rot_absmax,W4A4,4,4,block_hadamard_last_dim,hadamard,128,,rotation + uniform fake quant; needs rotation handling,22,8.997968544765643,wikitext,wikitext-2-raw-v1,test,512,2048,2048
+ffn_rot_lm_w4a4,rot_lm,W4A4,4,4,block_hadamard_last_dim,hadamard,128,,non-uniform codebook fake quant; not native INT GEMM,22,8.586875540730743,wikitext,wikitext-2-raw-v1,test,512,2048,2048
+ffn_rot_lm_w3a4,rot_lm,W3A4,3,4,block_hadamard_last_dim,hadamard,128,,non-uniform codebook fake quant; not native INT GEMM,22,9.978913003137311,wikitext,wikitext-2-raw-v1,test,512,2048,2048
+ffn_rot_lm_w4a3,rot_lm,W4A3,4,3,block_hadamard_last_dim,hadamard,128,,non-uniform codebook fake quant; not native INT GEMM,22,9.352936473222663,wikitext,wikitext-2-raw-v1,test,512,2048,2048
+ffn_randhadamard_lm_w4a4,randhadamard_lm,W4A4,4,4,block_randomized_hadamard_last_dim,randomized_hadamard,128,,randomized Hadamard + non-uniform codebook fake quant,22,8.617458774931064,wikitext,wikitext-2-raw-v1,test,512,2048,2048
+ffn_randhadamard_lm_w3a4,randhadamard_lm,W3A4,3,4,block_randomized_hadamard_last_dim,randomized_hadamard,128,,randomized Hadamard + non-uniform codebook fake quant,22,9.895186772164903,wikitext,wikitext-2-raw-v1,test,512,2048,2048
+ffn_randhadamard_lm_w4a3,randhadamard_lm,W4A3,4,3,block_randomized_hadamard_last_dim,randomized_hadamard,128,,randomized Hadamard + non-uniform codebook fake quant,22,9.310910334141049,wikitext,wikitext-2-raw-v1,test,512,2048,2048
+ffn_randortho_lm_w4a4,randortho_lm,W4A4,4,4,block_random_orthogonal_last_dim,random_orthogonal,128,,dense random orthogonal + non-uniform codebook fake quant,22,8.83388440325182,wikitext,wikitext-2-raw-v1,test,512,2048,2048
+ffn_randortho_lm_w3a4,randortho_lm,W3A4,3,4,block_random_orthogonal_last_dim,random_orthogonal,128,,dense random orthogonal + non-uniform codebook fake quant,22,10.520528739080317,wikitext,wikitext-2-raw-v1,test,512,2048,2048
+ffn_randortho_lm_w4a3,randortho_lm,W4A3,4,3,block_random_orthogonal_last_dim,random_orthogonal,128,,dense random orthogonal + non-uniform codebook fake quant,22,10.954122379844486,wikitext,wikitext-2-raw-v1,test,512,2048,2048

@@ -15,13 +15,14 @@ from rotationquant.stage_c import (
     STAGE_C_KV_SPECS,
     STAGE_C_STRUCTURED_ATTENTION_SPECS,
     StageCStructuredAttentionSpec,
-    headwise_hadamard,
-    inverse_headwise_hadamard,
+    headwise_rotation,
+    make_head_rotation_matrix,
     make_head_signs,
     projection_error_metrics,
     quantized_kv_attention,
     quantized_kv_attention_o_proj_absorb,
 )
+from rotationquant.rotations import block_rotation_last_dim
 
 try:
     from transformers.models.llama.modeling_llama import apply_rotary_pos_emb
@@ -34,6 +35,8 @@ def apply_stage_c_attention_fake_quant_(
     method_name: str,
     *,
     block_size: int = 128,
+    mxfp4_group_size: int = 32,
+    rotation_seed: int = 0,
     use_random_signs: bool = False,
     sign_seed: int = 0,
 ) -> list[dict[str, object]]:
@@ -42,6 +45,8 @@ def apply_stage_c_attention_fake_quant_(
         model,
         method_name,
         block_size=block_size,
+        mxfp4_group_size=mxfp4_group_size,
+        rotation_seed=rotation_seed,
         use_random_signs=use_random_signs,
         sign_seed=sign_seed,
     )
@@ -52,6 +57,8 @@ def fake_quant_attention_from_record(
     *,
     method_name: str,
     block_size: int = 128,
+    mxfp4_group_size: int = 32,
+    rotation_seed: int = 0,
     use_random_signs: bool = False,
     sign_seed: int = 0,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
@@ -60,6 +67,8 @@ def fake_quant_attention_from_record(
         record,
         method_name=method_name,
         block_size=block_size,
+        mxfp4_group_size=mxfp4_group_size,
+        rotation_seed=rotation_seed,
         use_random_signs=use_random_signs,
         sign_seed=sign_seed,
     )
@@ -90,20 +99,22 @@ def absorb_o_proj_weight_headwise(
     weight: torch.Tensor,
     *,
     head_dim: int,
+    rotation_block_size: int | None = None,
     signs: torch.Tensor | None = None,
+    rotation_backend: str = "hadamard",
+    rotation_seed: int = 0,
 ) -> torch.Tensor:
-    """Return W_o R where R is the independent per-head H64 rotation.
+    """Return W_o R where R is the independent per-head rotation.
 
     The weight shape is [out_features, hidden_size]. The input dimension is
     interpreted as concatenated attention heads; no cross-head mixing is used.
     """
-    if weight.shape[-1] % head_dim != 0:
-        raise ValueError(f"o_proj input dimension {weight.shape[-1]} is not divisible by head_dim={head_dim}.")
-    shaped = weight.reshape(weight.shape[0], weight.shape[1] // head_dim, head_dim)
-    absorbed = shaped
-    if signs is not None:
-        absorbed = absorbed * signs.to(device=weight.device, dtype=weight.dtype)
-    return headwise_hadamard(absorbed, signs=None).reshape_as(weight)
+    return block_rotation_last_dim(
+        weight,
+        block_size=rotation_block_size or head_dim,
+        rotation_backend=rotation_backend,
+        seed=rotation_seed,
+    )
 
 
 class StageCStructuredAttentionWrapper(torch.nn.Module):
@@ -115,6 +126,8 @@ class StageCStructuredAttentionWrapper(torch.nn.Module):
         *,
         method_name: str,
         block_size: int = 128,
+        mxfp4_group_size: int = 32,
+        rotation_seed: int = 0,
         use_random_signs: bool = False,
         sign_seed: int = 0,
         record_details: bool = False,
@@ -125,6 +138,8 @@ class StageCStructuredAttentionWrapper(torch.nn.Module):
         self.method_name = method_name
         self.spec: StageCStructuredAttentionSpec = STAGE_C_STRUCTURED_ATTENTION_SPECS[method_name]
         self.block_size = block_size
+        self.mxfp4_group_size = mxfp4_group_size
+        self.rotation_seed = rotation_seed
         self.record_details = record_details
         self.config = attention_module.config
         self.layer_idx = attention_module.layer_idx
@@ -134,24 +149,57 @@ class StageCStructuredAttentionWrapper(torch.nn.Module):
         self.attention_dropout = getattr(attention_module, "attention_dropout", 0.0)
         self.last_details: dict[str, torch.Tensor] | None = None
 
+        kv_spec = STAGE_C_KV_SPECS[self.spec.kv_spec_key]
+        self.kv_block_size = kv_spec.kv_block_size
+        self.head_rotation_backend = "randomized_hadamard" if use_random_signs else kv_spec.rotation_backend
+        self.head_rotation_seed = sign_seed if use_random_signs else rotation_seed
         base_dtype = attention_module.q_proj.weight.dtype
         signs = (
             make_head_signs(
                 self.head_dim,
-                seed=sign_seed,
+                seed=self.head_rotation_seed,
                 device="cpu",
                 dtype=base_dtype,
             )
-            if use_random_signs
+            if self.head_rotation_backend == "randomized_hadamard"
+            else None
+        )
+        rotation_matrix = (
+            make_head_rotation_matrix(
+                self.head_dim,
+                seed=self.head_rotation_seed,
+                device="cpu",
+                dtype=base_dtype,
+            )
+            if self.head_rotation_backend == "random_orthogonal"
             else None
         )
         self.register_buffer("head_signs", signs)
+        self.register_buffer("head_rotation_matrix", rotation_matrix)
 
         if self.spec.quantize_qkv:
             assert self.spec.linear_spec is not None
-            q_weight, _ = prepare_stage_b_weight(attention_module.q_proj.weight.detach().cpu(), self.spec.linear_spec, block_size)
-            k_weight, _ = prepare_stage_b_weight(attention_module.k_proj.weight.detach().cpu(), self.spec.linear_spec, block_size)
-            v_weight, _ = prepare_stage_b_weight(attention_module.v_proj.weight.detach().cpu(), self.spec.linear_spec, block_size)
+            q_weight, _ = prepare_stage_b_weight(
+                attention_module.q_proj.weight.detach().cpu(),
+                self.spec.linear_spec,
+                block_size,
+                mxfp4_group_size=mxfp4_group_size,
+                rotation_seed=rotation_seed,
+            )
+            k_weight, _ = prepare_stage_b_weight(
+                attention_module.k_proj.weight.detach().cpu(),
+                self.spec.linear_spec,
+                block_size,
+                mxfp4_group_size=mxfp4_group_size,
+                rotation_seed=rotation_seed,
+            )
+            v_weight, _ = prepare_stage_b_weight(
+                attention_module.v_proj.weight.detach().cpu(),
+                self.spec.linear_spec,
+                block_size,
+                mxfp4_group_size=mxfp4_group_size,
+                rotation_seed=rotation_seed,
+            )
         else:
             q_weight = attention_module.q_proj.weight.detach().cpu()
             k_weight = attention_module.k_proj.weight.detach().cpu()
@@ -159,7 +207,14 @@ class StageCStructuredAttentionWrapper(torch.nn.Module):
 
         o_weight = attention_module.o_proj.weight.detach().cpu()
         if self.spec.value_path == "o_proj_absorb":
-            o_weight = absorb_o_proj_weight_headwise(o_weight, head_dim=self.head_dim, signs=signs)
+            o_weight = absorb_o_proj_weight_headwise(
+                o_weight,
+                head_dim=self.head_dim,
+                rotation_block_size=self.kv_block_size,
+                signs=signs,
+                rotation_backend=self.head_rotation_backend,
+                rotation_seed=self.head_rotation_seed,
+            )
             if self.spec.quantize_o:
                 assert self.spec.linear_spec is not None
                 method = STAGE_B_METHODS[self.spec.linear_spec.method]
@@ -167,12 +222,19 @@ class StageCStructuredAttentionWrapper(torch.nn.Module):
                     o_weight,
                     self.spec.linear_spec.w_bits,
                     method.quantizer,
-                    block_size=self.head_dim,
+                    block_size=self.kv_block_size,
+                    mxfp4_group_size=mxfp4_group_size,
                 )
         elif self.spec.value_path == "reconstruct":
             if self.spec.quantize_o:
                 assert self.spec.linear_spec is not None
-                o_weight, _ = prepare_stage_b_weight(o_weight, self.spec.linear_spec, block_size)
+                o_weight, _ = prepare_stage_b_weight(
+                    o_weight,
+                    self.spec.linear_spec,
+                    block_size,
+                    mxfp4_group_size=mxfp4_group_size,
+                    rotation_seed=rotation_seed,
+                )
         else:
             raise ValueError(f"Unsupported value_path: {self.spec.value_path}")
 
@@ -201,6 +263,8 @@ class StageCStructuredAttentionWrapper(torch.nn.Module):
                 hidden_states,
                 self.spec.linear_spec,
                 block_size=self.block_size,
+                mxfp4_group_size=self.mxfp4_group_size,
+                rotation_seed=self.rotation_seed,
             )
         else:
             qkv_input = hidden_states
@@ -220,13 +284,16 @@ class StageCStructuredAttentionWrapper(torch.nn.Module):
                     attn_output,
                     self.spec.linear_spec.a_bits,
                     method.quantizer,
-                    block_size=self.head_dim,
+                    block_size=self.kv_block_size,
+                    mxfp4_group_size=self.mxfp4_group_size,
                 )
             else:
                 o_input, _ = quantize_stage_b_activation_domain(
                     attn_output,
                     self.spec.linear_spec,
                     block_size=self.block_size,
+                    mxfp4_group_size=self.mxfp4_group_size,
+                    rotation_seed=self.rotation_seed,
                 )
         else:
             o_input = attn_output
@@ -270,8 +337,16 @@ class StageCStructuredAttentionWrapper(torch.nn.Module):
                 self.num_key_value_groups,
                 kv_spec,
                 signs=self.head_signs,
+                matrix=self.head_rotation_matrix,
             )
-            pre_o_reference = inverse_headwise_hadamard(attention.output_heads, signs=self.head_signs)
+            pre_o_reference = headwise_rotation(
+                attention.output_heads,
+                rotation_backend=self.head_rotation_backend,
+                signs=self.head_signs,
+                matrix=self.head_rotation_matrix,
+                block_size=self.kv_block_size,
+                inverse=True,
+            )
         else:
             attention = quantized_kv_attention(
                 query_states,
@@ -282,6 +357,7 @@ class StageCStructuredAttentionWrapper(torch.nn.Module):
                 self.num_key_value_groups,
                 kv_spec,
                 signs=self.head_signs,
+                matrix=self.head_rotation_matrix,
             )
             pre_o_reference = attention.output_heads
 
@@ -312,6 +388,8 @@ def apply_stage_c_structured_attention_(
     method_name: str,
     *,
     block_size: int = 128,
+    mxfp4_group_size: int = 32,
+    rotation_seed: int = 0,
     use_random_signs: bool = False,
     sign_seed: int = 0,
 ) -> list[dict[str, object]]:
@@ -326,6 +404,8 @@ def apply_stage_c_structured_attention_(
             original_attention,
             method_name=method_name,
             block_size=block_size,
+            mxfp4_group_size=mxfp4_group_size,
+            rotation_seed=rotation_seed + layer_index,
             use_random_signs=use_random_signs,
             sign_seed=sign_seed + layer_index,
         )
@@ -343,6 +423,17 @@ def apply_stage_c_structured_attention_(
                 "kv_bits": kv_spec.label,
                 "k_bits": kv_spec.k_bits,
                 "v_bits": kv_spec.v_bits,
+                "kv_rotation_backend": kv_spec.rotation_backend,
+                "kv_block_size": kv_spec.kv_block_size,
+                "linear_rotation_backend": (
+                    STAGE_B_METHODS[spec.linear_spec.method].rotation_backend or "none"
+                    if spec.linear_spec is not None
+                    else "none"
+                ),
+                "rotation_seed": rotation_seed + layer_index,
+                "block_size": block_size,
+                "o_proj_domain_block_size": kv_spec.kv_block_size if spec.value_path == "o_proj_absorb" else block_size,
+                "mxfp4_group_size": mxfp4_group_size,
                 "value_path": spec.value_path,
                 "compute_interpretation": spec.compute_interpretation,
             }
@@ -355,6 +446,8 @@ def fake_quant_structured_attention_from_record(
     *,
     method_name: str,
     block_size: int = 128,
+    mxfp4_group_size: int = 32,
+    rotation_seed: int = 0,
     use_random_signs: bool = False,
     sign_seed: int = 0,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
@@ -363,6 +456,8 @@ def fake_quant_structured_attention_from_record(
         record.module,
         method_name=method_name,
         block_size=block_size,
+        mxfp4_group_size=mxfp4_group_size,
+        rotation_seed=rotation_seed + record.layer_index,
         use_random_signs=use_random_signs,
         sign_seed=sign_seed + record.layer_index,
         record_details=True,

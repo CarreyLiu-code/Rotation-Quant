@@ -11,6 +11,8 @@ def apply_stage_a_weight_quant_(
     bits: int,
     method_name: str,
     block_size: int = 128,
+    mxfp4_group_size: int = 32,
+    rotation_seed: int = 0,
 ) -> list[dict[str, object]]:
     """Quantize Stage A target Linear weights in-place and return metadata.
 
@@ -28,6 +30,8 @@ def apply_stage_a_weight_quant_(
                 bits=bits,
                 method_name=method_name,
                 block_size=block_size,
+                mxfp4_group_size=mxfp4_group_size,
+                rotation_seed=rotation_seed,
             )
             layer.weight.copy_(quantized_weight.to(device=layer.weight.device, dtype=layer.weight.dtype))
             records.append({"layer": layer_name, **metadata})

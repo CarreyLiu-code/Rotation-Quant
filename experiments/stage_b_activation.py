@@ -14,7 +14,7 @@ from rotationquant.metrics import distribution_metrics, tensor_metrics
 from rotationquant.modeling import TINYLLAMA_BASE_DIR, load_causal_lm
 from rotationquant.ppl import load_text_dataset, tokenize_texts
 from rotationquant.run_metadata import build_run_metadata, create_run_output_dir, write_run_metadata
-from rotationquant.stage_b import STAGE_B_METHODS, block_hadamard_last_dim, quantize_activation_for_b1
+from rotationquant.stage_b import STAGE_B_METHODS, block_hadamard_last_dim, quantize_activation_for_b1, stage_b_method_supports_bits
 
 
 def parse_args() -> argparse.Namespace:
@@ -24,6 +24,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--methods", nargs="+", default=["direct_absmax", "rot_absmax", "rot_lm"])
     parser.add_argument("--bits", nargs="+", type=int, default=[4, 3, 2])
     parser.add_argument("--block-size", type=int, default=128)
+    parser.add_argument("--mxfp4-group-size", type=int, default=32)
+    parser.add_argument("--rotation-seed", type=int, default=0)
     parser.add_argument("--dtype", choices=["float16", "bfloat16", "float32"], default="float16")
     parser.add_argument("--device-map", default=None)
     parser.add_argument("--device", default=None)
@@ -142,7 +144,8 @@ def main() -> None:
 
     records: list[dict[str, object]] = []
     histograms: list[dict[str, object]] = []
-    total = len(capture.records) * len(args.methods) * len(args.bits)
+    method_bit_pairs = [(method, bits) for method in args.methods for bits in args.bits if stage_b_method_supports_bits(method, bits)]
+    total = len(capture.records) * len(method_bit_pairs)
     progress = tqdm(total=total, desc="Stage B activation")
     for activation in capture.records:
         tensor = activation.tensor
@@ -169,25 +172,26 @@ def main() -> None:
         )
         original_distribution = {f"original_{key}": value for key, value in distribution_metrics(tensor).items()}
         rotated_distribution = {f"rotated_{key}": value for key, value in distribution_metrics(rotated).items()}
-        for method in args.methods:
-            for bits in args.bits:
-                candidate, metadata = quantize_activation_for_b1(
-                    tensor,
-                    method_name=method,
-                    bits=bits,
-                    block_size=args.block_size,
-                )
-                records.append(
-                    {
-                        "layer_index": activation.layer_index,
-                        "site": activation.site,
-                        **metadata,
-                        **tensor_metrics(tensor, candidate),
-                        **original_distribution,
-                        **rotated_distribution,
-                    }
-                )
-                progress.update(1)
+        for method, bits in method_bit_pairs:
+            candidate, metadata = quantize_activation_for_b1(
+                tensor,
+                method_name=method,
+                bits=bits,
+                block_size=args.block_size,
+                mxfp4_group_size=args.mxfp4_group_size,
+                rotation_seed=args.rotation_seed,
+            )
+            records.append(
+                {
+                    "layer_index": activation.layer_index,
+                    "site": activation.site,
+                    **metadata,
+                    **tensor_metrics(tensor, candidate),
+                    **original_distribution,
+                    **rotated_distribution,
+                }
+            )
+            progress.update(1)
     progress.close()
 
     write_csv_jsonl(records, output_dir)

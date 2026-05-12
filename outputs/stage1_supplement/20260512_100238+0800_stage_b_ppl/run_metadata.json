@@ -1,0 +1,56 @@
+{
+  "experiment": "stage_b_ppl",
+  "run_id": "20260512_100238+0800_stage_b_ppl",
+  "timestamp": "2026-05-12T10:02:38+08:00",
+  "timezone": "Asia/Shanghai",
+  "cwd": "/Users/carreyliu/Projects/RotationQuantDemo",
+  "output_dir": "outputs/stage1_supplement/20260512_100238+0800_stage_b_ppl",
+  "git_commit": "eedb0606daae49894cdc7f9997b25bdf445031a3",
+  "git_status_short": "M experiments/stage_a_ppl.py\n M experiments/stage_a_weight_only.py\n M experiments/stage_b_activation.py\n M experiments/stage_b_local.py\n M experiments/stage_b_ppl.py\n M experiments/stage_c_attention_layer.py\n M experiments/stage_c_kv_local.py\n M experiments/stage_c_ppl.py\n M src/rotationquant/quantizers.py\n M src/rotationquant/rotations.py\n M src/rotationquant/stage_a.py\n M src/rotationquant/stage_a_model.py\n M src/rotationquant/stage_b.py\n M src/rotationquant/stage_c.py\n M src/rotationquant/stage_c_model.py\n?? scripts/run_stage1_supplement_a_ppl.sh\n?? scripts/run_stage1_supplement_a_tensor.sh\n?? scripts/run_stage1_supplement_b_activation.sh\n?? scripts/run_stage1_supplement_b_local.sh\n?? scripts/run_stage1_supplement_b_ppl.sh\n?? scripts/run_stage1_supplement_blocksize_a_ppl.sh\n?? scripts/run_stage1_supplement_blocksize_a_tensor.sh\n?? scripts/run_stage1_supplement_blocksize_b_activation.sh\n?? scripts/run_stage1_supplement_blocksize_b_local.sh\n?? scripts/run_stage1_supplement_blocksize_b_ppl.sh\n?? scripts/run_stage1_supplement_blocksize_c_attention_layer.sh\n?? scripts/run_stage1_supplement_blocksize_c_kv_local.sh\n?? scripts/run_stage1_supplement_blocksize_c_ppl.sh\n?? scripts/run_stage1_supplement_c_attention_layer.sh\n?? scripts/run_stage1_supplement_c_kv_local.sh\n?? scripts/run_stage1_supplement_c_ppl.sh\n?? stage1_supplement.md",
+  "python": "3.11.14",
+  "platform": "macOS-15.7.4-arm64-arm-64bit",
+  "package_versions": {
+    "torch": "2.11.0",
+    "transformers": "5.8.0",
+    "safetensors": "0.7.0",
+    "datasets": "4.8.5",
+    "numpy": "2.4.3",
+    "pandas": "3.0.2",
+    "tqdm": "4.67.3"
+  },
+  "torch_runtime": {
+    "torch_importable": true,
+    "mps_built": true,
+    "mps_available": true,
+    "mps_device_count": 1
+  },
+  "args": {
+    "model_dir": "models/TinyLlama-1.1B-intermediate-step-1431k-3T",
+    "output_dir": "outputs/stage1_supplement",
+    "methods": [
+      "ffn_mxfp4_w4a4",
+      "ffn_rot_mxfp4_w4a4",
+      "ffn_rot_lm_w4a4",
+      "ffn_rot_lm_w3a4"
+    ],
+    "block_size": 64,
+    "mxfp4_group_size": 32,
+    "rotation_seed": 11,
+    "dtype": "float16",
+    "device_map": null,
+    "device": "mps",
+    "dataset": "wikitext",
+    "dataset_config": "wikitext-2-raw-v1",
+    "split": "test",
+    "text_column": "text",
+    "max_samples": 512,
+    "sequence_length": 2048,
+    "stride": 2048
+  },
+  "record_count": 4,
+  "duration_seconds": 973.688,
+  "output_files": [
+    "ppl_runs.jsonl",
+    "ppl.csv"
+  ]
+}

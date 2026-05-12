@@ -1,0 +1,5 @@
+method_key,method,bits,w_bits,a_bits,rotation,rotation_backend,block_size,mxfp4_group_size,compute_interpretation,quantized_ffn_modules,ppl,dataset,dataset_config,split,max_samples,sequence_length,stride
+ffn_mxfp4_w4a4,mxfp4,W4A4,4,4,none,none,64,32,MXFP4 E2M1 fake quant with 32-value group scales,22,8.941881887177905,wikitext,wikitext-2-raw-v1,test,512,2048,2048
+ffn_rot_mxfp4_w4a4,rot_mxfp4,W4A4,4,4,block_hadamard_last_dim,hadamard,64,32,Hadamard rotation + MXFP4 E2M1 fake quant,22,8.975387789681182,wikitext,wikitext-2-raw-v1,test,512,2048,2048
+ffn_rot_lm_w4a4,rot_lm,W4A4,4,4,block_hadamard_last_dim,hadamard,64,,non-uniform codebook fake quant; not native INT GEMM,22,8.605975266306224,wikitext,wikitext-2-raw-v1,test,512,2048,2048
+ffn_rot_lm_w3a4,rot_lm,W3A4,3,4,block_hadamard_last_dim,hadamard,64,,non-uniform codebook fake quant; not native INT GEMM,22,10.021631558108522,wikitext,wikitext-2-raw-v1,test,512,2048,2048
