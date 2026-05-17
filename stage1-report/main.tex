@@ -2,6 +2,9 @@
 % !TeX root = ./main.tex
 \documentclass[lang=cn,chinesefont=nofont,a4paper,newtx]{elegantpaper}
 
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,calc,shapes.geometric}
+
 \setCJKmainfont[AutoFakeBold=2,AutoFakeSlant=.2]{STSong}
 \setCJKmonofont{STSong}
 
@@ -26,6 +29,17 @@
 \renewcommand{\bottomfraction}{0.8}
 \renewcommand{\textfraction}{0.07}
 \renewcommand{\floatpagefraction}{0.8}
+\tikzset{
+  tensor/.style={draw, rounded corners=1pt, align=center, minimum height=6mm, minimum width=16mm, font=\scriptsize},
+  op/.style={draw, rounded corners=1pt, fill=gray!8, align=center, minimum height=6mm, minimum width=15mm, font=\scriptsize},
+  quant/.style={draw=blue!65!black, rounded corners=1pt, fill=blue!5, text=blue!70!black, align=center, minimum height=7mm, minimum width=20mm, font=\scriptsize},
+  linear/.style={draw, rounded corners=1pt, fill=white, align=center, minimum height=8mm, minimum width=23mm, font=\scriptsize},
+  modulebox/.style={draw=gray!70, dashed, rounded corners=2pt, inner sep=5pt},
+  domainlabel/.style={align=center, font=\scriptsize},
+  flow/.style={-{Latex[length=2mm]}, thick},
+  prep/.style={-{Latex[length=2mm]}, dashed, gray!75, thick},
+  bypass/.style={-{Latex[length=2mm]}, red!70!black, thick}
+}
 
 \begin{document}
 
@@ -127,6 +141,94 @@ RotationQuant ISSCC slides 提供了本实验的系统背景：旋转域量化�
 本实验统一使用 TinyLlama 作为实验模型，checkpoint 为 TinyLlama-1.1B intermediate step 1431k-3T；完整 Hugging Face 名称与本地模型路径已记录在实验文档和每次正式运行的 metadata 中。该模型为 LLaMA-like 架构，共 22 层，hidden size 为 2048，FFN intermediate size 为 5632；attention 使用 32 个 query heads、4 个 KV heads，head dimension 为 64。A/B 线默认使用 block size 128，并补充比较 32/64/128 三种 rotation block size；C 线在 KV cache 上比较 head-wise H64 与 head-internal H32。
 
 数据集采用 WikiText2 raw test split。正式 PPL 评估策略是：使用 512 个样本、2048 token evaluation window 与 2048 token stride。实验在 Apple Silicon 上使用 PyTorch MPS 后端运行。实验代码运行在 \texttt{rotationquant} conda 环境中，主要包版本由各 run 的 \texttt{run\_metadata.json} 记录：Python 3.11.14，PyTorch 2.11.0，Transformers 5.8.0，Datasets 4.8.5，NumPy 2.4.3，Pandas 3.0.2，TQDM 4.67.3。
+
+\subsection{当前量化模型计算流}
+
+当前 full-model fake quant 由 Attention 和 FFN 两类 wrapper 实现。Attention wrapper 只替换 decoder layer 中的 \texttt{self\_attn}，FFN wrapper 只替换 \texttt{mlp}。RMSNorm、残差连接和 decoder layer 外层控制流保持 TinyLlama 原结构；两个 wrapper 的输出都回到原 hidden domain，因此残差流不需要额外旋转对齐。Stage 2 主组可概括为 \texttt{Rot-LM W4A4 + HLM K4V4}：W/A 使用 block-wise rotation + Lloyd-Max fake quant，post-RoPE KV cache 使用 head-wise Hadamard-LM。
+
+图~\ref{fig:quantized-decoder-dataflow} 按当前代码实现总结了 Attention 与 FFN 中的 data flow。蓝色节点表示低比特 fake quant 路径，红色标注表示 FP16 / RoPE / residual domain；虚线箭头表示权重预旋转、预量化或输出投影吸收等初始化阶段操作。
+
+\begin{figure}[!htbp]
+  \centering
+  \resizebox{\linewidth}{!}{%
+  \begin{tikzpicture}[x=1cm,y=1cm]
+    \node[tensor] (h0) at (0,0) {Hidden\\FP16 domain};
+    \node[op] (rms1) at (2.0,0) {RMSNorm};
+    \node[linear] (attn_top) at (4.3,0) {Attention\\wrapper};
+    \node[op] (add1) at (6.6,0) {$+$\\residual};
+    \node[op] (rms2) at (8.6,0) {RMSNorm};
+    \node[linear] (ffn_top) at (10.9,0) {FFN\\wrapper};
+    \node[op] (add2) at (13.2,0) {$+$\\residual};
+    \node[tensor] (h1) at (15.2,0) {Next hidden\\FP16 domain};
+
+    \draw[flow] (h0) -- (rms1);
+    \draw[flow] (rms1) -- (attn_top);
+    \draw[flow] (attn_top) -- (add1);
+    \draw[flow] (add1) -- (rms2);
+    \draw[flow] (rms2) -- (ffn_top);
+    \draw[flow] (ffn_top) -- (add2);
+    \draw[flow] (add2) -- (h1);
+    \draw[bypass] (h0.north) -- ++(0,0.6) -| (add1.north);
+    \draw[bypass] (add1.north) -- ++(0,0.6) -| (add2.north);
+    \node[domainlabel, text=red!70!black] at (7.6,0.95) {residual stream stays in original hidden domain};
+
+    \node[tensor] (ax) at (0,-3.10) {Attention input\\$x$};
+    \node[quant] (aq) at (2.1,-3.10) {$Q_A(xH_b)$\\W/A fake quant};
+    \node[linear] (qkv) at (4.65,-3.10) {$q/k/v$ proj\\$Q_W(H_b^T W)$};
+    \node[op] (shape) at (7.0,-3.10) {reshape\\Q: 32 heads\\K/V: 4 heads};
+    \node[op, text=red!70!black] (rope) at (9.15,-2.40) {RoPE\\Q/K};
+    \node[quant] (qkrot) at (11.45,-2.40) {$Q_H,K_H$\\head $H_{64}$\\HLM K};
+    \node[op] (score) at (13.85,-2.40) {$P=\mathrm{softmax}$\\GQA score};
+    \node[quant] (vrot) at (9.15,-3.85) {$\hat{V}_H$\\HLM V};
+    \node[op] (oh) at (11.45,-3.85) {$O_H=P\hat{V}_H$};
+    \node[quant] (oq) at (13.85,-3.85) {in-domain\\$Q_A(O_H)$};
+    \node[linear] (oproj) at (16.25,-3.85) {$o$ proj\\$W_oH_{64,\mathrm{bd}}$};
+    \node[tensor] (ay) at (18.6,-3.85) {Attention out\\FP16 domain};
+    \node[domainlabel, text=blue!70!black] at (2.1,-2.10) {W4A4 candidates:\\Rot-LM / Rot-MXFP4 / Rot-Absmax};
+    \node[domainlabel, text=blue!70!black] at (11.45,-1.40) {K4V4 cache fake quant};
+    \node[domainlabel] (awprep) at (4.65,-1.60) {offline weight prep\\$Q_W(H_b^T W_{q/k/v})$};
+    \node[domainlabel] (oabs) at (16.25,-2.50) {attention structure adaptation\\$W_{o,\mathrm{abs}}=W_oH_{64,\mathrm{bd}}$};
+    \draw[flow] (ax) -- (aq);
+    \draw[flow] (aq) -- (qkv);
+    \draw[flow] (qkv) -- (shape);
+    \draw[flow] (shape) -- (rope);
+    \draw[flow] (rope) -- (qkrot);
+    \draw[flow] (qkrot) -- (score);
+    \draw[flow] (shape) -- (vrot);
+    \draw[flow] (score) -- (oh);
+    \draw[flow] (vrot) -- (oh);
+    \draw[flow] (oh) -- (oq);
+    \draw[flow] (oq) -- (oproj);
+    \draw[flow] (oproj) -- (ay);
+    \draw[prep] (awprep) -- (qkv);
+    \draw[prep] (oabs) -- (oproj);
+    \node[modulebox, fit=(ax)(ay)(awprep)(oabs)(vrot), label={[font=\small]above:Attention fake quant path}] {};
+
+    \node[tensor] (fx) at (0,-7.00) {FFN input\\$x$};
+    \node[quant] (fq) at (2.1,-7.00) {$Q_A(xH_b)$\\shared act quant};
+    \node[linear] (gate) at (4.85,-6.30) {gate proj\\$Q_W(H_b^T W_g)$};
+    \node[linear] (up) at (4.85,-7.70) {up proj\\$Q_W(H_b^T W_u)$};
+    \node[op] (silu) at (7.55,-7.00) {$z=\mathrm{SiLU}(g)\odot u$};
+    \node[quant] (fq2) at (10.15,-7.00) {$Q_A(zH'_b)$\\2nd act quant};
+    \node[linear] (down) at (12.85,-7.00) {down proj\\$Q_W(H_b'^T W_d)$};
+    \node[tensor] (fy) at (15.25,-7.00) {FFN out\\FP16 domain};
+    \node[domainlabel, text=blue!70!black] at (2.1,-6.00) {W/A fake quant};
+    \node[domainlabel] (fwprep) at (8.65,-5.60) {offline weight prep on input dimension\\gate/up use $H_b$, down uses $H'_b$};
+    \draw[flow] (fx) -- (fq);
+    \draw[flow] (fq) -- (gate);
+    \draw[flow] (fq) -- (up);
+    \draw[flow] (gate) -- (silu);
+    \draw[flow] (up) -- (silu);
+    \draw[flow] (silu) -- (fq2);
+    \draw[flow] (fq2) -- (down);
+    \draw[flow] (down) -- (fy);
+    \draw[prep] (fwprep) -- (gate);
+    \draw[prep] (fwprep) -- (down);
+    \node[modulebox, fit=(fx)(fy)(gate)(up)(fwprep), label={[font=\small]above:FFN fake quant path}] {};
+  \end{tikzpicture}}
+  \caption{当前全模型 fake quant 的 Attention 与 FFN data flow}
+  \label{fig:quantized-decoder-dataflow}
+\end{figure}
 
 \section{实验结果}
 
